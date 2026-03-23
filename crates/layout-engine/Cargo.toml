@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish = false
-description = "Bootstrap layout metadata for FlowtileWM."
+description = "Layout recompute engine for FlowtileWM."
 
 [dependencies]
-
+flowtile-domain.workspace = true

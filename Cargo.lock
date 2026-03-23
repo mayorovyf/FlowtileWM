@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "flowtile-cli"
-version = "0.0.1"
+version = "0.0.3"
 dependencies = [
  "flowtile-domain",
  "flowtile-ipc",
@@ -12,11 +12,11 @@ dependencies = [
 
 [[package]]
 name = "flowtile-config-rules"
-version = "0.0.1"
+version = "0.0.3"
 
 [[package]]
 name = "flowtile-core-daemon"
-version = "0.0.1"
+version = "0.0.3"
 dependencies = [
  "flowtile-domain",
  "flowtile-wm-core",
@@ -24,27 +24,33 @@ dependencies = [
 
 [[package]]
 name = "flowtile-diagnostics"
-version = "0.0.1"
+version = "0.0.3"
+dependencies = [
+ "flowtile-domain",
+]
 
 [[package]]
 name = "flowtile-domain"
-version = "0.0.1"
+version = "0.0.3"
 
 [[package]]
 name = "flowtile-ipc"
-version = "0.0.1"
+version = "0.0.3"
 
 [[package]]
 name = "flowtile-layout-engine"
-version = "0.0.1"
+version = "0.0.3"
+dependencies = [
+ "flowtile-domain",
+]
 
 [[package]]
 name = "flowtile-windows-adapter"
-version = "0.0.1"
+version = "0.0.3"
 
 [[package]]
 name = "flowtile-wm-core"
-version = "0.0.1"
+version = "0.0.3"
 dependencies = [
  "flowtile-config-rules",
  "flowtile-diagnostics",
