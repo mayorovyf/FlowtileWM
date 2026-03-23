@@ -1,0 +1,10 @@
+[package]
+name = "flowtile-diagnostics"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Bootstrap diagnostics metadata for FlowtileWM."
+
+[dependencies]
+

@@ -1,0 +1,10 @@
+[package]
+name = "flowtile-domain"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Shared domain bootstrap types for FlowtileWM."
+
+[dependencies]
+

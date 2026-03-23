@@ -1,0 +1,16 @@
+[package]
+name = "flowtile-wm-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Bootstrap WM Core facade for FlowtileWM."
+
+[dependencies]
+flowtile-config-rules.workspace = true
+flowtile-diagnostics.workspace = true
+flowtile-domain.workspace = true
+flowtile-ipc.workspace = true
+flowtile-layout-engine.workspace = true
+flowtile-windows-adapter.workspace = true
+

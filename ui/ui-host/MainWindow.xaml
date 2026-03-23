@@ -1,0 +1,41 @@
+<Window
+    x:Class="Flowtile.UiHost.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Title="Flowtile UI Host">
+    <Grid Padding="32" RowSpacing="16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <TextBlock
+            FontSize="28"
+            FontWeight="SemiBold"
+            Text="Flowtile UI Host bootstrap" />
+
+        <TextBlock
+            Grid.Row="1"
+            TextWrapping="WrapWholeWords"
+            Opacity="0.82"
+            Text="This window proves that the WinUI 3 shell host has its own entry point and can evolve independently from the Rust daemon." />
+
+        <Border
+            Grid.Row="2"
+            Margin="0,8,0,0"
+            Padding="20"
+            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+            CornerRadius="16">
+            <StackPanel Spacing="10">
+                <TextBlock FontSize="18" FontWeight="SemiBold" Text="Prepared next steps" />
+                <TextBlock Text="Overview, diagnostics UI and shell surfaces will land here in later versions." />
+                <TextBlock Text="The current milestone intentionally provides only a buildable shell boundary." />
+            </StackPanel>
+        </Border>
+    </Grid>
+</Window>
+

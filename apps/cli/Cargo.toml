@@ -1,0 +1,12 @@
+[package]
+name = "flowtile-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Bootstrap CLI client for FlowtileWM."
+
+[dependencies]
+flowtile-domain.workspace = true
+flowtile-ipc.workspace = true
+

@@ -1,0 +1,12 @@
+[package]
+name = "flowtile-core-daemon"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Bootstrap entry point for the FlowtileWM core daemon."
+
+[dependencies]
+flowtile-domain.workspace = true
+flowtile-wm-core.workspace = true
+
