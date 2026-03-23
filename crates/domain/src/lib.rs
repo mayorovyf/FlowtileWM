@@ -21,7 +21,7 @@ pub use model::{
     all_column_modes,
 };
 
-pub const VERSION_LINE: &str = "v.0.0.3";
+pub const VERSION_LINE: &str = "v.0.0.4";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct StateVersion(u64);

@@ -7,3 +7,4 @@ publish = false
 description = "Canonical domain model and events for FlowtileWM."
 
 [dependencies]
+serde = { version = "1.0", features = ["derive"] }

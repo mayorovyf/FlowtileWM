@@ -8,5 +8,5 @@ description = "Bootstrap entry point for the FlowtileWM core daemon."
 
 [dependencies]
 flowtile-domain.workspace = true
+flowtile-windows-adapter.workspace = true
 flowtile-wm-core.workspace = true
-
