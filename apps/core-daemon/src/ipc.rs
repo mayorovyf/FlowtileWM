@@ -9,7 +9,7 @@ use flowtile_ipc::{IpcError, IpcEvent, IpcRequest, IpcResponse, NamedPipeListene
 use flowtile_wm_core::{CoreDaemonRuntime, RuntimeCycleReport, RuntimeError};
 use serde_json::{Value, json};
 
-use crate::{ControlMessage, projection::build_snapshot_projection};
+use crate::{control::ControlMessage, projection::build_snapshot_projection};
 
 pub fn spawn_ipc_servers(control_sender: mpsc::Sender<ControlMessage>) {
     spawn_command_listener(control_sender.clone());

@@ -11,11 +11,9 @@ use kdl::{KdlDocument, KdlNode, KdlValue};
 pub const PREFERRED_CONFIG_FORMAT: &str = "KDL";
 pub const FALLBACK_CONFIG_FORMAT: &str = "TOML";
 pub const DEFAULT_CONFIG_PATH: &str = "config/flowtile.kdl";
-const DEFAULT_HOTKEY_BINDINGS: [(&str, &str); 7] = [
-    ("Win+Ctrl+J", "focus-next"),
-    ("Win+Ctrl+K", "focus-prev"),
-    ("Win+Ctrl+H", "scroll-strip-left"),
-    ("Win+Ctrl+L", "scroll-strip-right"),
+const DEFAULT_HOTKEY_BINDINGS: [(&str, &str); 5] = [
+    ("Win+H", "focus-prev"),
+    ("Win+J", "focus-next"),
     ("Win+Ctrl+Shift+F", "toggle-floating"),
     ("Win+Ctrl+Shift+Space", "toggle-fullscreen"),
     ("Win+Ctrl+Shift+Backspace", "disable-management-and-unwind"),
@@ -988,7 +986,7 @@ mod tests {
         );
         assert_eq!(config.projection.strip_scroll_step, 240);
         assert_eq!(config.projection.default_column_mode, ColumnMode::Normal);
-        assert_eq!(config.hotkeys.len(), 7);
+        assert_eq!(config.hotkeys.len(), 5);
         assert_eq!(config.hotkeys, super::default_hotkeys());
     }
 
@@ -1063,9 +1061,8 @@ mod tests {
         assert_eq!(created_path, path);
         assert!(source.contains("bind-control-mode \"coexistence\""));
         assert!(source.contains("strip-scroll-step 240"));
-        assert!(source.contains("hotkey \"Win+Ctrl+J\" \"focus-next\""));
-        assert!(source.contains("hotkey \"Win+Ctrl+H\" \"scroll-strip-left\""));
-        assert!(source.contains("hotkey \"Win+Ctrl+L\" \"scroll-strip-right\""));
+        assert!(source.contains("hotkey \"Win+H\" \"focus-prev\""));
+        assert!(source.contains("hotkey \"Win+J\" \"focus-next\""));
         assert!(!source.contains("hotkey \"Alt+J\" \"focus-next\""));
         assert!(source.contains("rule \"float-dialogs\""));
     }
