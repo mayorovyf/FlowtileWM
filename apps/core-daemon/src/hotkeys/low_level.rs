@@ -2,6 +2,7 @@ use std::{
     collections::{HashMap, HashSet},
     mem::zeroed,
     sync::{
+        atomic::{AtomicBool, Ordering},
         Arc, Mutex, OnceLock,
         mpsc::{self, Sender},
     },
@@ -31,6 +32,7 @@ use super::native::{NativeHotkeyRegistration, last_error_message};
 
 static LOW_LEVEL_HOOK_RUNTIMES: OnceLock<Mutex<HashMap<u32, Arc<LowLevelHotkeyRuntime>>>> =
     OnceLock::new();
+static SUPER_HELD: AtomicBool = AtomicBool::new(false);
 
 const LOW_LEVEL_REPEAT_INITIAL_DELAY: Duration = Duration::from_millis(180);
 const LOW_LEVEL_REPEAT_INTERVAL: Duration = Duration::from_millis(45);
@@ -132,6 +134,14 @@ impl LowLevelHotkeyState {
     fn handle_key_event(&mut self, vk: u32, message: u32, injected: bool) -> HookDecision {
         if injected || !is_keyboard_message(message) {
             return HookDecision::default();
+        }
+
+        if is_win_vk(vk) {
+            if is_key_down_message(message) {
+                SUPER_HELD.store(true, Ordering::Relaxed);
+            } else if is_key_up_message(message) {
+                SUPER_HELD.store(false, Ordering::Relaxed);
+            }
         }
 
         if is_key_down_message(message) {
@@ -298,6 +308,10 @@ impl LowLevelHotkeyState {
             registration.required_modifiers == MOD_WIN && registration.key == key
         })
     }
+}
+
+pub(crate) fn is_super_held_by_low_level_runtime() -> bool {
+    SUPER_HELD.load(Ordering::Relaxed)
 }
 
 #[derive(Clone, Debug)]

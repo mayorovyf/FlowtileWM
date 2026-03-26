@@ -186,6 +186,7 @@ fn parse_command(arguments: Vec<String>) -> Result<CliCommand, String> {
         "focus-prev" => Ok(CliCommand::simple("focus_prev")),
         "scroll-left" => Ok(CliCommand::simple("scroll_strip_left")),
         "scroll-right" => Ok(CliCommand::simple("scroll_strip_right")),
+        "cycle-column-width" => Ok(CliCommand::simple("cycle_column_width")),
         "toggle-floating" => Ok(CliCommand::simple("toggle_floating")),
         "toggle-tabbed" => Ok(CliCommand::simple("toggle_tabbed")),
         "toggle-maximized" => Ok(CliCommand::simple("toggle_maximized")),
@@ -206,6 +207,7 @@ fn print_help() {
     println!("  flowtile-cli events");
     println!("  flowtile-cli focus-next | focus-prev");
     println!("  flowtile-cli scroll-left | scroll-right");
+    println!("  flowtile-cli cycle-column-width");
     println!(
         "  flowtile-cli toggle-floating | toggle-tabbed | toggle-maximized | toggle-fullscreen"
     );

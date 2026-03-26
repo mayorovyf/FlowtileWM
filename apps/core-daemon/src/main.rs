@@ -3,6 +3,7 @@ mod control;
 mod diag;
 mod hotkeys;
 mod ipc;
+mod manual_resize;
 mod projection;
 mod touchpad;
 mod watch;

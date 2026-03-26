@@ -155,6 +155,13 @@ pub fn handle_ipc_request(
             ),
             "ipc-scroll-strip-right",
         ),
+        "cycle_column_width" => respond_to_runtime_command(
+            request_id,
+            runtime,
+            dry_run,
+            DomainEvent::cycle_column_width(next_manual_correlation_id(manual_correlation_id)),
+            "ipc-cycle-column-width",
+        ),
         "toggle_floating" => respond_to_runtime_command(
             request_id,
             runtime,

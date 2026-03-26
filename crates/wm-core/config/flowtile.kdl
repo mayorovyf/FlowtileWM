@@ -6,15 +6,15 @@ layout {
   strip-scroll-step 240
   default-column-mode "normal"
   default-column-width "fraction" 1 2
+  outer-padding 16
+  column-gap 12
+  window-gap 12
+  floating-margin 16
 }
 
 input {
   bind-control-mode "coexistence"
-  touchpad-override true
-  touchpad-gesture "three-finger-swipe-left" "focus-next"
-  touchpad-gesture "three-finger-swipe-right" "focus-prev"
-  touchpad-gesture "four-finger-swipe-up" "toggle-overview"
-  touchpad-gesture "four-finger-swipe-down" "toggle-overview"
+  touchpad-override false
   hotkey "Win+H" "focus-prev"
   hotkey "Win+J" "focus-next"
   hotkey "Win+R" "cycle-column-width"

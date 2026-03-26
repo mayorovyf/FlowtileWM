@@ -13,9 +13,10 @@ use kdl::{KdlDocument, KdlNode, KdlValue};
 pub const PREFERRED_CONFIG_FORMAT: &str = "KDL";
 pub const FALLBACK_CONFIG_FORMAT: &str = "TOML";
 pub const DEFAULT_CONFIG_PATH: &str = "config/flowtile.kdl";
-const DEFAULT_HOTKEY_BINDINGS: [(&str, &str); 5] = [
+const DEFAULT_HOTKEY_BINDINGS: [(&str, &str); 6] = [
     ("Win+H", "focus-prev"),
     ("Win+J", "focus-next"),
+    ("Win+R", "cycle-column-width"),
     ("Win+Ctrl+Shift+F", "toggle-floating"),
     ("Win+Ctrl+Shift+Space", "toggle-fullscreen"),
     ("Win+Ctrl+Shift+Backspace", "disable-management-and-unwind"),
@@ -1209,7 +1210,7 @@ mod tests {
         assert_eq!(config.projection.strip_scroll_step, 240);
         assert_eq!(config.projection.default_column_mode, ColumnMode::Normal);
         assert_eq!(config.projection.layout_spacing, LayoutSpacing::default());
-        assert_eq!(config.hotkeys.len(), 5);
+        assert_eq!(config.hotkeys.len(), 6);
         assert_eq!(config.hotkeys, super::default_hotkeys());
         assert!(!config.touchpad.override_enabled);
         assert!(config.touchpad.gestures.is_empty());

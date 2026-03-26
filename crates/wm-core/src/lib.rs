@@ -229,6 +229,8 @@ struct NewColumnRequest {
 mod runtime;
 mod state_store;
 
+pub use runtime::ActiveTiledResizeTarget;
+
 #[cfg(test)]
 mod tests {
     use std::{

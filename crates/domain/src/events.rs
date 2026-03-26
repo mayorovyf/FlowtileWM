@@ -1,6 +1,6 @@
 use crate::{
-    ColumnMode, ConfigProjection, CorrelationId, FocusOrigin, MonitorId, Rect, Size, StateVersion,
-    WidthSemantics, WindowClassification, WindowId, WindowLayer,
+    ColumnMode, ConfigProjection, CorrelationId, FocusOrigin, MonitorId, Rect, ResizeEdge, Size,
+    StateVersion, WidthSemantics, WindowClassification, WindowId, WindowLayer,
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -43,6 +43,11 @@ pub enum DomainEventName {
     CmdToggleMaximized,
     CmdToggleFullscreen,
     CmdToggleOverview,
+    CmdBeginColumnWidthResize,
+    CmdUpdateColumnWidthPreview,
+    CmdCommitColumnWidth,
+    CmdCancelColumnWidthResize,
+    CmdCycleColumnWidth,
     CmdEmergencyUnwind,
     ConfigReloadRequested,
     ConfigReloadSucceeded,
@@ -82,6 +87,11 @@ impl DomainEventName {
             Self::CmdToggleMaximized => "EVT-CMD-TOGGLE-MAXIMIZED",
             Self::CmdToggleFullscreen => "EVT-CMD-TOGGLE-FULLSCREEN",
             Self::CmdToggleOverview => "EVT-CMD-TOGGLE-OVERVIEW",
+            Self::CmdBeginColumnWidthResize => "EVT-CMD-BEGIN-COLUMN-WIDTH-RESIZE",
+            Self::CmdUpdateColumnWidthPreview => "EVT-CMD-UPDATE-COLUMN-WIDTH-PREVIEW",
+            Self::CmdCommitColumnWidth => "EVT-CMD-COMMIT-COLUMN-WIDTH",
+            Self::CmdCancelColumnWidthResize => "EVT-CMD-CANCEL-COLUMN-WIDTH-RESIZE",
+            Self::CmdCycleColumnWidth => "EVT-CMD-CYCLE-COLUMN-WIDTH",
             Self::CmdEmergencyUnwind => "EVT-CMD-EMERGENCY-UNWIND",
             Self::ConfigReloadRequested => "EVT-CONFIG-RELOAD-REQUESTED",
             Self::ConfigReloadSucceeded => "EVT-CONFIG-RELOAD-SUCCEEDED",
@@ -185,6 +195,17 @@ pub struct OverviewCommandPayload {
     pub monitor_id: Option<MonitorId>,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ColumnWidthResizePayload {
+    pub edge: ResizeEdge,
+    pub pointer_x: i32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ColumnWidthPointerPayload {
+    pub pointer_x: i32,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ConfigReloadRequestedPayload {
     pub source: EventSource,
@@ -225,6 +246,11 @@ pub enum DomainEventPayload {
     CmdToggleMaximized(WindowCommandPayload),
     CmdToggleFullscreen(WindowCommandPayload),
     CmdToggleOverview(OverviewCommandPayload),
+    CmdBeginColumnWidthResize(ColumnWidthResizePayload),
+    CmdUpdateColumnWidthPreview(ColumnWidthPointerPayload),
+    CmdCommitColumnWidth(ColumnWidthPointerPayload),
+    CmdCancelColumnWidthResize,
+    CmdCycleColumnWidth,
     ConfigReloadRequested(ConfigReloadRequestedPayload),
     ConfigReloadSucceeded(ConfigReloadSucceededPayload),
     ConfigReloadFailed(ConfigReloadFailedPayload),
@@ -432,6 +458,65 @@ impl DomainEvent {
             EventSource::InputCommand,
             correlation_id,
             DomainEventPayload::CmdToggleOverview(OverviewCommandPayload { monitor_id }),
+        )
+    }
+
+    pub fn begin_column_width_resize(
+        correlation_id: CorrelationId,
+        edge: ResizeEdge,
+        pointer_x: i32,
+    ) -> Self {
+        Self::new(
+            DomainEventName::CmdBeginColumnWidthResize,
+            EventCategory::UserInputDerived,
+            EventSource::InputCommand,
+            correlation_id,
+            DomainEventPayload::CmdBeginColumnWidthResize(ColumnWidthResizePayload {
+                edge,
+                pointer_x,
+            }),
+        )
+    }
+
+    pub fn update_column_width_preview(correlation_id: CorrelationId, pointer_x: i32) -> Self {
+        Self::new(
+            DomainEventName::CmdUpdateColumnWidthPreview,
+            EventCategory::UserInputDerived,
+            EventSource::InputCommand,
+            correlation_id,
+            DomainEventPayload::CmdUpdateColumnWidthPreview(ColumnWidthPointerPayload {
+                pointer_x,
+            }),
+        )
+    }
+
+    pub fn commit_column_width(correlation_id: CorrelationId, pointer_x: i32) -> Self {
+        Self::new(
+            DomainEventName::CmdCommitColumnWidth,
+            EventCategory::UserInputDerived,
+            EventSource::InputCommand,
+            correlation_id,
+            DomainEventPayload::CmdCommitColumnWidth(ColumnWidthPointerPayload { pointer_x }),
+        )
+    }
+
+    pub fn cancel_column_width_resize(correlation_id: CorrelationId) -> Self {
+        Self::new(
+            DomainEventName::CmdCancelColumnWidthResize,
+            EventCategory::UserInputDerived,
+            EventSource::InputCommand,
+            correlation_id,
+            DomainEventPayload::CmdCancelColumnWidthResize,
+        )
+    }
+
+    pub fn cycle_column_width(correlation_id: CorrelationId) -> Self {
+        Self::new(
+            DomainEventName::CmdCycleColumnWidth,
+            EventCategory::UserInputDerived,
+            EventSource::InputCommand,
+            correlation_id,
+            DomainEventPayload::CmdCycleColumnWidth,
         )
     }
 

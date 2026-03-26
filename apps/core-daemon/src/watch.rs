@@ -16,6 +16,7 @@ use crate::{
     diag::write_runtime_log,
     hotkeys::{HotkeyListener, HotkeyListenerError, ensure_bind_control_mode_supported},
     ipc,
+    manual_resize::{ManualResizeController, ManualResizeError},
     touchpad::{
         TouchpadListener, TouchpadListenerError, assess_touchpad_override,
         ensure_touchpad_override_supported,
@@ -100,6 +101,17 @@ pub(crate) fn run_watch(
             return ExitCode::from(1);
         }
     };
+    let mut manual_resize = match ManualResizeController::spawn() {
+        Ok(controller) => {
+            write_runtime_log("watch: manual-resize-controller-started");
+            controller
+        }
+        Err(error) => {
+            write_runtime_log(format!("watch: manual-resize-controller-start-error={error}"));
+            eprintln!("manual width resize failed to start: {error}");
+            return ExitCode::from(1);
+        }
+    };
     spawn_stdin_listener(control_sender.clone());
     write_runtime_log("watch: stdin-listener-started");
 
@@ -134,7 +146,7 @@ pub(crate) fn run_watch(
         ipc.command_pipe_name, ipc.event_stream_pipe_name
     );
     println!(
-        "stdin commands: focus-next, focus-prev, scroll-left, scroll-right, toggle-floating, toggle-tabbed, toggle-maximized, toggle-fullscreen, toggle-overview, reload-config, snapshot, unwind, rescan, quit"
+        "stdin commands: focus-next, focus-prev, scroll-left, scroll-right, cycle-column-width, toggle-floating, toggle-tabbed, toggle-maximized, toggle-fullscreen, toggle-overview, reload-config, snapshot, unwind, rescan, quit"
     );
 
     let mut completed_iterations = 0_u64;
@@ -273,6 +285,29 @@ pub(crate) fn run_watch(
                     ) {
                         Ok(report) => {
                             println!("manual command: scroll-right");
+                            print_iteration(completed_iterations + 1, &report);
+                            completed_iterations += 1;
+                            maybe_broadcast_state(
+                                &runtime,
+                                &mut event_subscribers,
+                                &mut stream_version,
+                                &mut last_streamed_state_version,
+                            );
+                        }
+                        Err(error) => {
+                            eprintln!("{error:?}");
+                            return ExitCode::from(1);
+                        }
+                    },
+                    WatchCommand::CycleColumnWidth => match runtime.dispatch_command(
+                        DomainEvent::cycle_column_width(
+                            next_manual_correlation_id(&mut manual_correlation_id),
+                        ),
+                        dry_run,
+                        "manual-cycle-column-width",
+                    ) {
+                        Ok(report) => {
+                            println!("manual command: cycle-column-width");
                             print_iteration(completed_iterations + 1, &report);
                             completed_iterations += 1;
                             maybe_broadcast_state(
@@ -546,6 +581,32 @@ pub(crate) fn run_watch(
 
             if iterations.is_some_and(|limit| completed_iterations >= limit) {
                 return ExitCode::SUCCESS;
+            }
+        }
+
+        match manual_resize.tick(&mut runtime, dry_run) {
+            Ok(Some(report)) => {
+                println!("manual command: column-width-drag");
+                print_iteration(completed_iterations + 1, &report);
+                completed_iterations += 1;
+                maybe_broadcast_state(
+                    &runtime,
+                    &mut event_subscribers,
+                    &mut stream_version,
+                    &mut last_streamed_state_version,
+                );
+                if iterations.is_some_and(|limit| completed_iterations >= limit) {
+                    return ExitCode::SUCCESS;
+                }
+            }
+            Ok(None) => {}
+            Err(ManualResizeError::Runtime(error)) => {
+                eprintln!("{error:?}");
+                return ExitCode::from(1);
+            }
+            Err(ManualResizeError::Platform(error)) => {
+                eprintln!("{error}");
+                return ExitCode::from(1);
             }
         }
 

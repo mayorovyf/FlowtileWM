@@ -8,8 +8,9 @@ use flowtile_config_rules::{
     classify_window, default_loaded_config, ensure_default_config, load_from_path, load_or_default,
 };
 use flowtile_domain::{
-    BindControlMode, CorrelationId, DomainEvent, DomainEventPayload, FocusBehavior, MonitorId,
-    RuntimeMode, TopologyRole, WidthSemantics, WindowId, WindowLayer, WindowPlacement, WmState,
+    BindControlMode, ColumnId, CorrelationId, DomainEvent, DomainEventPayload, FocusBehavior,
+    MonitorId, Rect, ResizeEdge, RuntimeMode, TopologyRole, WidthSemantics, WindowId,
+    WindowLayer, WindowPlacement, WmState,
 };
 use flowtile_layout_engine::{padded_tiled_viewport, recompute_workspace};
 use flowtile_windows_adapter::{
@@ -28,6 +29,17 @@ const FOCUS_OBSERVATION_GRACE: Duration = Duration::from_millis(250);
 struct ApplyPlanContext {
     previous_focused_hwnd: Option<u64>,
     animate_window_switch: bool,
+    animate_tiled_geometry: bool,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ActiveTiledResizeTarget {
+    pub workspace_id: flowtile_domain::WorkspaceId,
+    pub column_id: ColumnId,
+    pub window_id: WindowId,
+    pub hwnd: Option<u64>,
+    pub rect: Rect,
+    pub viewport: Rect,
 }
 
 impl CoreDaemonRuntime {
@@ -85,6 +97,59 @@ impl CoreDaemonRuntime {
         self.last_snapshot.as_ref()
     }
 
+    pub fn manual_width_resize_preview_rect(&self) -> Option<Rect> {
+        self.store
+            .state()
+            .layout
+            .width_resize_session
+            .as_ref()
+            .map(|session| session.clamped_preview_rect)
+    }
+
+    pub fn active_tiled_resize_target(
+        &self,
+    ) -> Result<Option<ActiveTiledResizeTarget>, RuntimeError> {
+        let Some(workspace_id) = self
+            .store
+            .state()
+            .focus
+            .focused_monitor_id
+            .and_then(|monitor_id| self.store.state().active_workspace_id_for_monitor(monitor_id))
+        else {
+            return Ok(None);
+        };
+        let Some(window_id) = self.store.state().focus.focused_window_id else {
+            return Ok(None);
+        };
+        let Some(window) = self.store.state().windows.get(&window_id) else {
+            return Ok(None);
+        };
+        if window.layer != WindowLayer::Tiled || window.is_floating || window.is_fullscreen {
+            return Ok(None);
+        }
+        let Some(column_id) = window.column_id else {
+            return Ok(None);
+        };
+        let projection = recompute_workspace(self.store.state(), workspace_id)?;
+        let Some(rect) = projection
+            .window_geometries
+            .iter()
+            .find(|geometry| geometry.window_id == window_id)
+            .map(|geometry| geometry.rect)
+        else {
+            return Ok(None);
+        };
+
+        Ok(Some(ActiveTiledResizeTarget {
+            workspace_id,
+            column_id,
+            window_id,
+            hwnd: window.current_hwnd_binding,
+            rect,
+            viewport: projection.viewport,
+        }))
+    }
+
     pub const fn management_enabled(&self) -> bool {
         self.management_enabled
     }
@@ -104,8 +169,11 @@ impl CoreDaemonRuntime {
         let _ = self.sync_snapshot_with_reason(snapshot.clone(), true, "command-pre-sync")?;
         let previous_focused_hwnd = self.current_focused_hwnd();
         let transition = self.store.dispatch(event)?;
-        let apply_plan_context =
-            self.build_apply_plan_context(previous_focused_hwnd, self.current_focused_hwnd());
+        let apply_plan_context = self.build_apply_plan_context(
+            previous_focused_hwnd,
+            self.current_focused_hwnd(),
+            reason,
+        );
         self.arm_pending_focus_claim(previous_focused_hwnd);
         let planned_operations = if self.management_enabled {
             self.plan_apply_operations_with_context(&snapshot, apply_plan_context)?
@@ -150,6 +218,64 @@ impl CoreDaemonRuntime {
         };
         self.validate_after_apply(&mut report, dry_run)?;
         Ok(report)
+    }
+
+    pub fn begin_column_width_resize(
+        &mut self,
+        edge: ResizeEdge,
+        pointer_x: i32,
+    ) -> Result<bool, RuntimeError> {
+        let correlation_id = self.next_correlation_id();
+        match self
+            .store
+            .dispatch(DomainEvent::begin_column_width_resize(
+                correlation_id,
+                edge,
+                pointer_x,
+            )) {
+            Ok(_) => Ok(self.store.state().layout.width_resize_session.is_some()),
+            Err(crate::CoreError::InvalidEvent(_)) => Ok(false),
+            Err(error) => Err(RuntimeError::Core(error)),
+        }
+    }
+
+    pub fn update_column_width_resize(&mut self, pointer_x: i32) -> Result<(), RuntimeError> {
+        let correlation_id = self.next_correlation_id();
+        match self
+            .store
+            .dispatch(DomainEvent::update_column_width_preview(
+                correlation_id,
+                pointer_x,
+            )) {
+            Ok(_) => Ok(()),
+            Err(crate::CoreError::InvalidEvent(_)) => Ok(()),
+            Err(error) => Err(RuntimeError::Core(error)),
+        }
+    }
+
+    pub fn cancel_column_width_resize(&mut self) -> Result<(), RuntimeError> {
+        let correlation_id = self.next_correlation_id();
+        match self
+            .store
+            .dispatch(DomainEvent::cancel_column_width_resize(correlation_id))
+        {
+            Ok(_) => Ok(()),
+            Err(crate::CoreError::InvalidEvent(_)) => Ok(()),
+            Err(error) => Err(RuntimeError::Core(error)),
+        }
+    }
+
+    pub fn commit_column_width_resize(
+        &mut self,
+        pointer_x: i32,
+        dry_run: bool,
+    ) -> Result<RuntimeCycleReport, RuntimeError> {
+        let correlation_id = self.next_correlation_id();
+        self.dispatch_command(
+            DomainEvent::commit_column_width(correlation_id, pointer_x),
+            dry_run,
+            "manual-column-width-commit",
+        )
     }
 
     pub fn reload_config(&mut self, dry_run: bool) -> Result<RuntimeCycleReport, RuntimeError> {
@@ -314,7 +440,7 @@ impl CoreDaemonRuntime {
         }
 
         let apply_plan_context =
-            self.build_apply_plan_context(previous_focused_hwnd, self.current_focused_hwnd());
+            self.build_apply_plan_context(previous_focused_hwnd, self.current_focused_hwnd(), "");
         let planned_operations = if self.management_enabled {
             self.plan_apply_operations_with_context(&snapshot, apply_plan_context)?
         } else {
@@ -673,7 +799,8 @@ impl CoreDaemonRuntime {
                         )
                     });
                 if needs_geometry || activate || visual_emphasis.is_some() {
-                    let window_switch_animation = (apply_plan_context.animate_window_switch
+                    let window_switch_animation = ((apply_plan_context.animate_window_switch
+                        || apply_plan_context.animate_tiled_geometry)
                         && geometry.layer == WindowLayer::Tiled
                         && needs_geometry)
                         .then_some(WindowSwitchAnimation {
@@ -854,11 +981,13 @@ impl CoreDaemonRuntime {
         &self,
         previous_focused_hwnd: Option<u64>,
         current_focused_hwnd: Option<u64>,
+        reason: &str,
     ) -> ApplyPlanContext {
         ApplyPlanContext {
             previous_focused_hwnd,
             animate_window_switch: self
                 .should_animate_window_switch(previous_focused_hwnd, current_focused_hwnd),
+            animate_tiled_geometry: should_animate_tiled_geometry(reason),
         }
     }
 
@@ -1141,6 +1270,13 @@ fn operations_are_activation_only(
     })
 }
 
+fn should_animate_tiled_geometry(reason: &str) -> bool {
+    matches!(
+        reason,
+        "manual-column-width-commit" | "manual-cycle-column-width"
+    )
+}
+
 fn should_auto_unwind_after_desync(
     remaining_operations: &[ApplyOperation],
     consecutive_desync_cycles: u32,
@@ -1204,10 +1340,41 @@ fn ensure_supported_bind_control_mode(
 }
 
 fn workspace_path(relative_path: &str) -> PathBuf {
+    workspace_root().join(relative_path)
+}
+
+fn workspace_root() -> PathBuf {
+    if let Ok(root) = std::env::var("FLOWTILE_WORKSPACE_ROOT") {
+        return PathBuf::from(root);
+    }
+
+    if let Ok(current_dir) = std::env::current_dir()
+        && let Some(root) = find_workspace_root(&current_dir)
+    {
+        return root;
+    }
+
+    if let Ok(current_exe) = std::env::current_exe()
+        && let Some(exe_dir) = current_exe.parent()
+        && let Some(root) = find_workspace_root(exe_dir)
+    {
+        return root;
+    }
+
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
         .join("..")
-        .join(relative_path)
+        .to_path_buf()
+}
+
+fn find_workspace_root(start: &Path) -> Option<PathBuf> {
+    for candidate in start.ancestors() {
+        if candidate.join("Cargo.toml").is_file() && candidate.join("config").is_dir() {
+            return Some(candidate.to_path_buf());
+        }
+    }
+
+    None
 }
 
 fn unix_timestamp() -> u64 {
@@ -1234,7 +1401,8 @@ fn normalize_reason_token(value: &str) -> String {
 mod tests {
     use flowtile_config_rules::WindowRuleDecision;
     use flowtile_domain::{
-        CorrelationId, DomainEvent, NavigationScope, Rect, RuntimeMode, WidthSemantics, WindowLayer,
+        CorrelationId, DomainEvent, NavigationScope, Rect, ResizeEdge, RuntimeMode,
+        WidthSemantics, WindowLayer,
     };
     use flowtile_windows_adapter::{
         ApplyOperation, PlatformMonitorSnapshot, PlatformSnapshot, PlatformWindowSnapshot,
@@ -1561,6 +1729,7 @@ mod tests {
                 ApplyPlanContext {
                     previous_focused_hwnd: Some(100),
                     animate_window_switch: true,
+                    animate_tiled_geometry: false,
                 },
             )
             .expect("apply plan should be computed");
@@ -1734,6 +1903,7 @@ mod tests {
                 ApplyPlanContext {
                     previous_focused_hwnd: Some(100),
                     animate_window_switch: true,
+                    animate_tiled_geometry: false,
                 },
             )
             .expect("apply plan should be computed");
@@ -1806,6 +1976,7 @@ mod tests {
                 ApplyPlanContext {
                     previous_focused_hwnd: Some(100),
                     animate_window_switch: true,
+                    animate_tiled_geometry: false,
                 },
             )
             .expect("apply plan should be computed");
@@ -1827,6 +1998,119 @@ mod tests {
             new_focus.visual_emphasis,
             Some(build_visual_emphasis(true, Some("notepad")))
         );
+    }
+
+    #[test]
+    fn cycle_column_width_uses_next_greater_step_for_custom_width() {
+        let mut runtime = CoreDaemonRuntime::new(RuntimeMode::WmOnly);
+        let snapshot = PlatformSnapshot {
+            foreground_hwnd: Some(100),
+            monitors: vec![PlatformMonitorSnapshot {
+                binding: "\\\\.\\DISPLAY1".to_string(),
+                work_area_rect: Rect::new(0, 0, 1200, 900),
+                dpi: 96,
+                is_primary: true,
+            }],
+            windows: vec![PlatformWindowSnapshot {
+                hwnd: 100,
+                title: "Window 100".to_string(),
+                class_name: "Notepad".to_string(),
+                process_id: 4242,
+                process_name: Some("notepad".to_string()),
+                rect: Rect::new(0, 0, 500, 900),
+                monitor_binding: "\\\\.\\DISPLAY1".to_string(),
+                is_visible: true,
+                is_focused: true,
+                management_candidate: true,
+            }],
+        };
+
+        runtime
+            .sync_snapshot(snapshot, true)
+            .expect("initial sync should succeed");
+        runtime
+            .store
+            .dispatch(DomainEvent::cycle_column_width(CorrelationId::new(10)))
+            .expect("width cycle should succeed");
+
+        let target = runtime
+            .active_tiled_resize_target()
+            .expect("active target lookup should succeed")
+            .expect("active tiled target should exist");
+        let column = runtime
+            .state()
+            .layout
+            .columns
+            .get(&target.column_id)
+            .expect("column should exist after width cycle");
+
+        assert_eq!(column.width_semantics, WidthSemantics::Fixed(584));
+    }
+
+    #[test]
+    fn manual_width_resize_commit_persists_fixed_width_and_clears_preview() {
+        let mut runtime = CoreDaemonRuntime::new(RuntimeMode::WmOnly);
+        let snapshot = PlatformSnapshot {
+            foreground_hwnd: Some(100),
+            monitors: vec![PlatformMonitorSnapshot {
+                binding: "\\\\.\\DISPLAY1".to_string(),
+                work_area_rect: Rect::new(0, 0, 1200, 900),
+                dpi: 96,
+                is_primary: true,
+            }],
+            windows: vec![PlatformWindowSnapshot {
+                hwnd: 100,
+                title: "Window 100".to_string(),
+                class_name: "Notepad".to_string(),
+                process_id: 4242,
+                process_name: Some("notepad".to_string()),
+                rect: Rect::new(0, 0, 420, 900),
+                monitor_binding: "\\\\.\\DISPLAY1".to_string(),
+                is_visible: true,
+                is_focused: true,
+                management_candidate: true,
+            }],
+        };
+
+        runtime
+            .sync_snapshot(snapshot, true)
+            .expect("initial sync should succeed");
+        let target = runtime
+            .active_tiled_resize_target()
+            .expect("active target lookup should succeed")
+            .expect("active tiled target should exist");
+        let initial_right = target.rect.x + target.rect.width as i32;
+
+        assert!(
+            runtime
+                .begin_column_width_resize(ResizeEdge::Right, initial_right)
+                .expect("begin resize should succeed")
+        );
+        runtime
+            .update_column_width_resize(initial_right + 120)
+            .expect("preview update should succeed");
+
+        let preview_rect = runtime
+            .manual_width_resize_preview_rect()
+            .expect("preview should exist during active resize");
+        assert_eq!(preview_rect.width, 120);
+
+        runtime
+            .store
+            .dispatch(DomainEvent::commit_column_width(
+                CorrelationId::new(11),
+                initial_right + 120,
+            ))
+            .expect("commit should succeed");
+
+        let column = runtime
+            .state()
+            .layout
+            .columns
+            .get(&target.column_id)
+            .expect("column should exist after width commit");
+        assert_eq!(column.width_semantics, WidthSemantics::Fixed(540));
+        assert!(runtime.manual_width_resize_preview_rect().is_none());
     }
 
     #[test]

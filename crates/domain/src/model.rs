@@ -144,6 +144,12 @@ impl WidthSemantics {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ResizeEdge {
+    Left,
+    Right,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub enum MaximizedState {
     #[default]
@@ -463,6 +469,21 @@ impl Default for DiagnosticsSummary {
 #[derive(Clone, Debug, Eq, PartialEq, Default)]
 pub struct LayoutState {
     pub columns: BTreeMap<ColumnId, Column>,
+    pub width_resize_session: Option<WidthResizeSession>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct WidthResizeSession {
+    pub workspace_id: WorkspaceId,
+    pub column_id: ColumnId,
+    pub window_id: WindowId,
+    pub anchor_edge: ResizeEdge,
+    pub anchor_x: i32,
+    pub current_pointer_x: i32,
+    pub initial_column_rect: Rect,
+    pub initial_width: u32,
+    pub target_width: u32,
+    pub clamped_preview_rect: Rect,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -16,6 +16,9 @@ mod native;
 mod trigger;
 
 #[cfg(windows)]
+pub(crate) use low_level::is_super_held_by_low_level_runtime;
+
+#[cfg(windows)]
 use native::{NativeHotkeyRuntime, spawn_native};
 
 enum HotkeyBackend {

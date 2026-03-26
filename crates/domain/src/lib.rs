@@ -8,6 +8,7 @@ mod ids;
 mod model;
 
 pub use events::{
+    ColumnWidthPointerPayload, ColumnWidthResizePayload,
     ConfigReloadFailedPayload, ConfigReloadRequestedPayload, ConfigReloadSucceededPayload,
     DomainEvent, DomainEventName, DomainEventPayload, EventCategory, EventSource, FocusBehavior,
     FocusCommandPayload, NavigationScope, OverviewCommandPayload, RulesUpdatedPayload,
@@ -19,9 +20,9 @@ pub use ids::{ColumnId, CorrelationId, MonitorId, WindowId, WorkspaceId, Workspa
 pub use model::{
     BindControlMode, CapturePolicy, Column, ColumnMode, ConfigProjection, DiagnosticsSummary,
     EdgeInsets, FloatingLayer, FocusOrigin, FocusState, LayoutSpacing, LayoutState, MaximizedState,
-    Monitor, OverviewState, RestoreTarget, RuntimeMode, RuntimeState, ScrollingStrip,
+    Monitor, OverviewState, ResizeEdge, RestoreTarget, RuntimeMode, RuntimeState, ScrollingStrip,
     StripLayoutMode, TopologyRole, WidthSemantics, WindowClassification, WindowLayer, WindowNode,
-    WmState, Workspace, WorkspaceSet, all_column_modes,
+    WidthResizeSession, WmState, Workspace, WorkspaceSet, all_column_modes,
 };
 
 pub const VERSION_LINE: &str = "v.1.0.0";

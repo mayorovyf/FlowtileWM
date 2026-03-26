@@ -22,6 +22,7 @@ pub const COMMANDS: &[&str] = &[
     "focus_prev",
     "scroll_strip_left",
     "scroll_strip_right",
+    "cycle_column_width",
     "move_window",
     "consume_window",
     "expel_window",

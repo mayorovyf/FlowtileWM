@@ -6,7 +6,9 @@ fn main() {
     } else {
         "flowtile-core-daemon.manifest"
     };
-    let manifest_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(manifest_name);
+    let manifest_dir = std::env::var("CARGO_MANIFEST_DIR")
+        .expect("Cargo must provide CARGO_MANIFEST_DIR to the build script");
+    let manifest_path = std::path::Path::new(&manifest_dir).join(manifest_name);
     println!("cargo:rerun-if-changed={}", manifest_path.display());
     println!("cargo:rustc-link-arg-bin=flowtile-core-daemon=/MANIFEST:EMBED");
     println!(
