@@ -812,10 +812,98 @@ mod tests {
     }
 
     #[test]
-    fn pure_win_j_chord_focuses_next_without_input_leakage() {
+    fn pure_win_k_chord_focuses_next_without_input_leakage() {
+        let mut state = LowLevelHotkeyState::new(vec![NativeHotkeyRegistration {
+            trigger: "Win+K".to_string(),
+            command: WatchCommand::FocusNext,
+            register_modifiers: MOD_WIN,
+            required_modifiers: MOD_WIN,
+            key: u32::from(b'K'),
+        }]);
+
+        assert_eq!(
+            state.handle_key_event(u32::from(VK_LWIN), WM_KEYDOWN, false),
+            HookDecision {
+                command: None,
+                suppress: true,
+                replay: None,
+            }
+        );
+        assert_eq!(
+            state.handle_key_event(u32::from(b'K'), WM_KEYDOWN, false),
+            HookDecision {
+                command: Some(WatchCommand::FocusNext),
+                suppress: true,
+                replay: None,
+            }
+        );
+        assert_eq!(
+            state.handle_key_event(u32::from(b'K'), WM_KEYUP, false),
+            HookDecision {
+                command: None,
+                suppress: true,
+                replay: None,
+            }
+        );
+        assert_eq!(
+            state.handle_key_event(u32::from(VK_LWIN), WM_KEYUP, false),
+            HookDecision {
+                command: None,
+                suppress: true,
+                replay: None,
+            }
+        );
+    }
+
+    #[test]
+    fn pure_win_u_chord_focuses_workspace_up_without_input_leakage() {
+        let mut state = LowLevelHotkeyState::new(vec![NativeHotkeyRegistration {
+            trigger: "Win+U".to_string(),
+            command: WatchCommand::FocusWorkspaceUp,
+            register_modifiers: MOD_WIN,
+            required_modifiers: MOD_WIN,
+            key: u32::from(b'U'),
+        }]);
+
+        assert_eq!(
+            state.handle_key_event(u32::from(VK_LWIN), WM_KEYDOWN, false),
+            HookDecision {
+                command: None,
+                suppress: true,
+                replay: None,
+            }
+        );
+        assert_eq!(
+            state.handle_key_event(u32::from(b'U'), WM_KEYDOWN, false),
+            HookDecision {
+                command: Some(WatchCommand::FocusWorkspaceUp),
+                suppress: true,
+                replay: None,
+            }
+        );
+        assert_eq!(
+            state.handle_key_event(u32::from(b'U'), WM_KEYUP, false),
+            HookDecision {
+                command: None,
+                suppress: true,
+                replay: None,
+            }
+        );
+        assert_eq!(
+            state.handle_key_event(u32::from(VK_LWIN), WM_KEYUP, false),
+            HookDecision {
+                command: None,
+                suppress: true,
+                replay: None,
+            }
+        );
+    }
+
+    #[test]
+    fn pure_win_j_chord_focuses_workspace_down_without_input_leakage() {
         let mut state = LowLevelHotkeyState::new(vec![NativeHotkeyRegistration {
             trigger: "Win+J".to_string(),
-            command: WatchCommand::FocusNext,
+            command: WatchCommand::FocusWorkspaceDown,
             register_modifiers: MOD_WIN,
             required_modifiers: MOD_WIN,
             key: u32::from(b'J'),
@@ -832,7 +920,7 @@ mod tests {
         assert_eq!(
             state.handle_key_event(u32::from(b'J'), WM_KEYDOWN, false),
             HookDecision {
-                command: Some(WatchCommand::FocusNext),
+                command: Some(WatchCommand::FocusWorkspaceDown),
                 suppress: true,
                 replay: None,
             }

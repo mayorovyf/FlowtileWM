@@ -13,7 +13,7 @@ pub use events::{
     DomainEventPayload, EventCategory, EventSource, FocusBehavior, FocusCommandPayload,
     NavigationScope, OverviewCommandPayload, RulesUpdatedPayload, StripScrollPayload,
     WindowCommandPayload, WindowDestroyedPayload, WindowDiscoveredPayload,
-    WindowFocusObservedPayload, WindowPlacement,
+    WindowFocusObservedPayload, WindowPlacement, WorkspaceCommandPayload,
 };
 pub use geometry::{Point, Rect, Size};
 pub use ids::{ColumnId, CorrelationId, MonitorId, WindowId, WorkspaceId, WorkspaceSetId};
@@ -25,7 +25,7 @@ pub use model::{
     WindowLayer, WindowNode, WmState, Workspace, WorkspaceSet, all_column_modes,
 };
 
-pub const VERSION_LINE: &str = "v.1.0.0";
+pub const VERSION_LINE: &str = "v.0.0.17";
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct StateVersion(u64);

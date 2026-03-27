@@ -13,9 +13,20 @@ use kdl::{KdlDocument, KdlNode, KdlValue};
 pub const PREFERRED_CONFIG_FORMAT: &str = "KDL";
 pub const FALLBACK_CONFIG_FORMAT: &str = "TOML";
 pub const DEFAULT_CONFIG_PATH: &str = "config/flowtile.kdl";
-const DEFAULT_HOTKEY_BINDINGS: [(&str, &str); 6] = [
+const DEFAULT_HOTKEY_BINDINGS: [(&str, &str); 14] = [
     ("Win+H", "focus-prev"),
-    ("Win+J", "focus-next"),
+    ("Win+K", "focus-next"),
+    ("Win+U", "focus-workspace-up"),
+    ("Win+J", "focus-workspace-down"),
+    ("Win+Ctrl+PageUp", "move-workspace-up"),
+    ("Win+Ctrl+PageDown", "move-workspace-down"),
+    (
+        "Win+Ctrl+Shift+PageUp",
+        "move-workspace-to-monitor-previous",
+    ),
+    ("Win+Ctrl+Shift+PageDown", "move-workspace-to-monitor-next"),
+    ("Win+Shift+PageUp", "move-column-to-workspace-up"),
+    ("Win+Shift+PageDown", "move-column-to-workspace-down"),
     ("Win+R", "cycle-column-width"),
     ("Win+Ctrl+Shift+F", "toggle-floating"),
     ("Win+Ctrl+Shift+Space", "toggle-fullscreen"),
@@ -1210,7 +1221,7 @@ mod tests {
         assert_eq!(config.projection.strip_scroll_step, 240);
         assert_eq!(config.projection.default_column_mode, ColumnMode::Normal);
         assert_eq!(config.projection.layout_spacing, LayoutSpacing::default());
-        assert_eq!(config.hotkeys.len(), 6);
+        assert_eq!(config.hotkeys.len(), 14);
         assert_eq!(config.hotkeys, super::default_hotkeys());
         assert!(!config.touchpad.override_enabled);
         assert!(config.touchpad.gestures.is_empty());
@@ -1322,8 +1333,10 @@ mod tests {
         assert!(source.contains("window-gap 12"));
         assert!(source.contains("floating-margin 16"));
         assert!(source.contains("hotkey \"Win+H\" \"focus-prev\""));
-        assert!(source.contains("hotkey \"Win+J\" \"focus-next\""));
-        assert!(!source.contains("hotkey \"Alt+J\" \"focus-next\""));
+        assert!(source.contains("hotkey \"Win+K\" \"focus-next\""));
+        assert!(source.contains("hotkey \"Win+U\" \"focus-workspace-up\""));
+        assert!(source.contains("hotkey \"Win+J\" \"focus-workspace-down\""));
+        assert!(!source.contains("hotkey \"Alt+K\" \"focus-next\""));
         assert!(source.contains("rule \"float-dialogs\""));
     }
 
@@ -1351,6 +1364,8 @@ input {
   touchpad-override true
   touchpad-gesture "three-finger-swipe-left" "focus-next"
   touchpad-gesture "three-finger-swipe-right" "focus-prev"
+  touchpad-gesture "three-finger-swipe-up" "focus-workspace-down"
+  touchpad-gesture "three-finger-swipe-down" "focus-workspace-up"
 }
 "#;
 
@@ -1358,12 +1373,14 @@ input {
             .expect("kdl-like fallback should parse touchpad config");
 
         assert!(config.touchpad.override_enabled);
-        assert_eq!(config.touchpad.gestures.len(), 2);
+        assert_eq!(config.touchpad.gestures.len(), 4);
         assert_eq!(
             config.touchpad.gestures[0].gesture,
             "three-finger-swipe-left"
         );
         assert_eq!(config.touchpad.gestures[0].command, "focus-next");
+        assert_eq!(config.touchpad.gestures[2].gesture, "three-finger-swipe-up");
+        assert_eq!(config.touchpad.gestures[2].command, "focus-workspace-down");
     }
 
     fn unique_test_path(label: &str) -> std::path::PathBuf {

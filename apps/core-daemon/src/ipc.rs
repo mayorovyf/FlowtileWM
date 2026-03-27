@@ -133,6 +133,26 @@ pub fn handle_ipc_request(
             ),
             "ipc-focus-prev",
         ),
+        "focus_workspace_up" => respond_to_runtime_command(
+            request_id,
+            runtime,
+            dry_run,
+            DomainEvent::focus_workspace_up(
+                next_manual_correlation_id(manual_correlation_id),
+                optional_monitor_id(&request.payload),
+            ),
+            "ipc-focus-workspace-up",
+        ),
+        "focus_workspace_down" => respond_to_runtime_command(
+            request_id,
+            runtime,
+            dry_run,
+            DomainEvent::focus_workspace_down(
+                next_manual_correlation_id(manual_correlation_id),
+                optional_monitor_id(&request.payload),
+            ),
+            "ipc-focus-workspace-down",
+        ),
         "scroll_strip_left" => respond_to_runtime_command(
             request_id,
             runtime,
@@ -154,6 +174,66 @@ pub fn handle_ipc_request(
                 0,
             ),
             "ipc-scroll-strip-right",
+        ),
+        "move_workspace_up" => respond_to_runtime_command(
+            request_id,
+            runtime,
+            dry_run,
+            DomainEvent::move_workspace_up(
+                next_manual_correlation_id(manual_correlation_id),
+                optional_monitor_id(&request.payload),
+            ),
+            "ipc-move-workspace-up",
+        ),
+        "move_workspace_down" => respond_to_runtime_command(
+            request_id,
+            runtime,
+            dry_run,
+            DomainEvent::move_workspace_down(
+                next_manual_correlation_id(manual_correlation_id),
+                optional_monitor_id(&request.payload),
+            ),
+            "ipc-move-workspace-down",
+        ),
+        "move_workspace_to_monitor_next" => respond_to_runtime_command(
+            request_id,
+            runtime,
+            dry_run,
+            DomainEvent::move_workspace_to_monitor_next(
+                next_manual_correlation_id(manual_correlation_id),
+                optional_monitor_id(&request.payload),
+            ),
+            "ipc-move-workspace-to-monitor-next",
+        ),
+        "move_workspace_to_monitor_previous" => respond_to_runtime_command(
+            request_id,
+            runtime,
+            dry_run,
+            DomainEvent::move_workspace_to_monitor_previous(
+                next_manual_correlation_id(manual_correlation_id),
+                optional_monitor_id(&request.payload),
+            ),
+            "ipc-move-workspace-to-monitor-previous",
+        ),
+        "move_column_to_workspace_up" => respond_to_runtime_command(
+            request_id,
+            runtime,
+            dry_run,
+            DomainEvent::move_column_to_workspace_up(
+                next_manual_correlation_id(manual_correlation_id),
+                optional_monitor_id(&request.payload),
+            ),
+            "ipc-move-column-to-workspace-up",
+        ),
+        "move_column_to_workspace_down" => respond_to_runtime_command(
+            request_id,
+            runtime,
+            dry_run,
+            DomainEvent::move_column_to_workspace_down(
+                next_manual_correlation_id(manual_correlation_id),
+                optional_monitor_id(&request.payload),
+            ),
+            "ipc-move-column-to-workspace-down",
         ),
         "cycle_column_width" => respond_to_runtime_command(
             request_id,
@@ -201,6 +281,26 @@ pub fn handle_ipc_request(
                 optional_window_id(&request.payload),
             ),
             "ipc-toggle-fullscreen",
+        ),
+        "open_overview" => respond_to_runtime_command(
+            request_id,
+            runtime,
+            dry_run,
+            DomainEvent::open_overview(
+                next_manual_correlation_id(manual_correlation_id),
+                optional_monitor_id(&request.payload),
+            ),
+            "ipc-open-overview",
+        ),
+        "close_overview" => respond_to_runtime_command(
+            request_id,
+            runtime,
+            dry_run,
+            DomainEvent::close_overview(
+                next_manual_correlation_id(manual_correlation_id),
+                optional_monitor_id(&request.payload),
+            ),
+            "ipc-close-overview",
         ),
         "toggle_overview" => respond_to_runtime_command(
             request_id,

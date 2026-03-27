@@ -148,7 +148,7 @@ pub(crate) fn run_watch(
         ipc.command_pipe_name, ipc.event_stream_pipe_name
     );
     println!(
-        "stdin commands: focus-next, focus-prev, scroll-left, scroll-right, cycle-column-width, toggle-floating, toggle-tabbed, toggle-maximized, toggle-fullscreen, toggle-overview, reload-config, snapshot, unwind, rescan, quit"
+        "stdin commands: focus-next, focus-prev, focus-workspace-up, focus-workspace-down, scroll-left, scroll-right, move-workspace-up, move-workspace-down, move-workspace-to-monitor-next, move-workspace-to-monitor-previous, move-column-to-workspace-up, move-column-to-workspace-down, cycle-column-width, toggle-floating, toggle-tabbed, toggle-maximized, toggle-fullscreen, open-overview, close-overview, toggle-overview, reload-config, snapshot, unwind, rescan, quit"
     );
 
     let mut completed_iterations = 0_u64;
@@ -251,6 +251,54 @@ pub(crate) fn run_watch(
                             return ExitCode::from(1);
                         }
                     },
+                    WatchCommand::FocusWorkspaceUp => match runtime.dispatch_command(
+                        DomainEvent::focus_workspace_up(
+                            next_manual_correlation_id(&mut manual_correlation_id),
+                            None,
+                        ),
+                        dry_run,
+                        "manual-focus-workspace-up",
+                    ) {
+                        Ok(report) => {
+                            println!("manual command: focus-workspace-up");
+                            print_iteration(completed_iterations + 1, &report);
+                            completed_iterations += 1;
+                            maybe_broadcast_state(
+                                &runtime,
+                                &mut event_subscribers,
+                                &mut stream_version,
+                                &mut last_streamed_state_version,
+                            );
+                        }
+                        Err(error) => {
+                            eprintln!("{error:?}");
+                            return ExitCode::from(1);
+                        }
+                    },
+                    WatchCommand::FocusWorkspaceDown => match runtime.dispatch_command(
+                        DomainEvent::focus_workspace_down(
+                            next_manual_correlation_id(&mut manual_correlation_id),
+                            None,
+                        ),
+                        dry_run,
+                        "manual-focus-workspace-down",
+                    ) {
+                        Ok(report) => {
+                            println!("manual command: focus-workspace-down");
+                            print_iteration(completed_iterations + 1, &report);
+                            completed_iterations += 1;
+                            maybe_broadcast_state(
+                                &runtime,
+                                &mut event_subscribers,
+                                &mut stream_version,
+                                &mut last_streamed_state_version,
+                            );
+                        }
+                        Err(error) => {
+                            eprintln!("{error:?}");
+                            return ExitCode::from(1);
+                        }
+                    },
                     WatchCommand::ScrollLeft => match runtime.dispatch_command(
                         DomainEvent::scroll_strip_left(
                             next_manual_correlation_id(&mut manual_correlation_id),
@@ -287,6 +335,150 @@ pub(crate) fn run_watch(
                     ) {
                         Ok(report) => {
                             println!("manual command: scroll-right");
+                            print_iteration(completed_iterations + 1, &report);
+                            completed_iterations += 1;
+                            maybe_broadcast_state(
+                                &runtime,
+                                &mut event_subscribers,
+                                &mut stream_version,
+                                &mut last_streamed_state_version,
+                            );
+                        }
+                        Err(error) => {
+                            eprintln!("{error:?}");
+                            return ExitCode::from(1);
+                        }
+                    },
+                    WatchCommand::MoveWorkspaceUp => match runtime.dispatch_command(
+                        DomainEvent::move_workspace_up(
+                            next_manual_correlation_id(&mut manual_correlation_id),
+                            None,
+                        ),
+                        dry_run,
+                        "manual-move-workspace-up",
+                    ) {
+                        Ok(report) => {
+                            println!("manual command: move-workspace-up");
+                            print_iteration(completed_iterations + 1, &report);
+                            completed_iterations += 1;
+                            maybe_broadcast_state(
+                                &runtime,
+                                &mut event_subscribers,
+                                &mut stream_version,
+                                &mut last_streamed_state_version,
+                            );
+                        }
+                        Err(error) => {
+                            eprintln!("{error:?}");
+                            return ExitCode::from(1);
+                        }
+                    },
+                    WatchCommand::MoveWorkspaceDown => match runtime.dispatch_command(
+                        DomainEvent::move_workspace_down(
+                            next_manual_correlation_id(&mut manual_correlation_id),
+                            None,
+                        ),
+                        dry_run,
+                        "manual-move-workspace-down",
+                    ) {
+                        Ok(report) => {
+                            println!("manual command: move-workspace-down");
+                            print_iteration(completed_iterations + 1, &report);
+                            completed_iterations += 1;
+                            maybe_broadcast_state(
+                                &runtime,
+                                &mut event_subscribers,
+                                &mut stream_version,
+                                &mut last_streamed_state_version,
+                            );
+                        }
+                        Err(error) => {
+                            eprintln!("{error:?}");
+                            return ExitCode::from(1);
+                        }
+                    },
+                    WatchCommand::MoveWorkspaceToMonitorNext => match runtime.dispatch_command(
+                        DomainEvent::move_workspace_to_monitor_next(
+                            next_manual_correlation_id(&mut manual_correlation_id),
+                            None,
+                        ),
+                        dry_run,
+                        "manual-move-workspace-to-monitor-next",
+                    ) {
+                        Ok(report) => {
+                            println!("manual command: move-workspace-to-monitor-next");
+                            print_iteration(completed_iterations + 1, &report);
+                            completed_iterations += 1;
+                            maybe_broadcast_state(
+                                &runtime,
+                                &mut event_subscribers,
+                                &mut stream_version,
+                                &mut last_streamed_state_version,
+                            );
+                        }
+                        Err(error) => {
+                            eprintln!("{error:?}");
+                            return ExitCode::from(1);
+                        }
+                    },
+                    WatchCommand::MoveWorkspaceToMonitorPrevious => match runtime.dispatch_command(
+                        DomainEvent::move_workspace_to_monitor_previous(
+                            next_manual_correlation_id(&mut manual_correlation_id),
+                            None,
+                        ),
+                        dry_run,
+                        "manual-move-workspace-to-monitor-previous",
+                    ) {
+                        Ok(report) => {
+                            println!("manual command: move-workspace-to-monitor-previous");
+                            print_iteration(completed_iterations + 1, &report);
+                            completed_iterations += 1;
+                            maybe_broadcast_state(
+                                &runtime,
+                                &mut event_subscribers,
+                                &mut stream_version,
+                                &mut last_streamed_state_version,
+                            );
+                        }
+                        Err(error) => {
+                            eprintln!("{error:?}");
+                            return ExitCode::from(1);
+                        }
+                    },
+                    WatchCommand::MoveColumnToWorkspaceUp => match runtime.dispatch_command(
+                        DomainEvent::move_column_to_workspace_up(
+                            next_manual_correlation_id(&mut manual_correlation_id),
+                            None,
+                        ),
+                        dry_run,
+                        "manual-move-column-to-workspace-up",
+                    ) {
+                        Ok(report) => {
+                            println!("manual command: move-column-to-workspace-up");
+                            print_iteration(completed_iterations + 1, &report);
+                            completed_iterations += 1;
+                            maybe_broadcast_state(
+                                &runtime,
+                                &mut event_subscribers,
+                                &mut stream_version,
+                                &mut last_streamed_state_version,
+                            );
+                        }
+                        Err(error) => {
+                            eprintln!("{error:?}");
+                            return ExitCode::from(1);
+                        }
+                    },
+                    WatchCommand::MoveColumnToWorkspaceDown => match runtime.dispatch_command(
+                        DomainEvent::move_column_to_workspace_down(
+                            next_manual_correlation_id(&mut manual_correlation_id),
+                            None,
+                        ),
+                        dry_run,
+                        "manual-move-column-to-workspace-down",
+                    ) {
+                        Ok(report) => {
+                            println!("manual command: move-column-to-workspace-down");
                             print_iteration(completed_iterations + 1, &report);
                             completed_iterations += 1;
                             maybe_broadcast_state(
@@ -406,6 +598,54 @@ pub(crate) fn run_watch(
                     ) {
                         Ok(report) => {
                             println!("manual command: toggle-fullscreen");
+                            print_iteration(completed_iterations + 1, &report);
+                            completed_iterations += 1;
+                            maybe_broadcast_state(
+                                &runtime,
+                                &mut event_subscribers,
+                                &mut stream_version,
+                                &mut last_streamed_state_version,
+                            );
+                        }
+                        Err(error) => {
+                            eprintln!("{error:?}");
+                            return ExitCode::from(1);
+                        }
+                    },
+                    WatchCommand::OpenOverview => match runtime.dispatch_command(
+                        DomainEvent::open_overview(
+                            next_manual_correlation_id(&mut manual_correlation_id),
+                            None,
+                        ),
+                        dry_run,
+                        "manual-open-overview",
+                    ) {
+                        Ok(report) => {
+                            println!("manual command: open-overview");
+                            print_iteration(completed_iterations + 1, &report);
+                            completed_iterations += 1;
+                            maybe_broadcast_state(
+                                &runtime,
+                                &mut event_subscribers,
+                                &mut stream_version,
+                                &mut last_streamed_state_version,
+                            );
+                        }
+                        Err(error) => {
+                            eprintln!("{error:?}");
+                            return ExitCode::from(1);
+                        }
+                    },
+                    WatchCommand::CloseOverview => match runtime.dispatch_command(
+                        DomainEvent::close_overview(
+                            next_manual_correlation_id(&mut manual_correlation_id),
+                            None,
+                        ),
+                        dry_run,
+                        "manual-close-overview",
+                    ) {
+                        Ok(report) => {
+                            println!("manual command: close-overview");
                             print_iteration(completed_iterations + 1, &report);
                             completed_iterations += 1;
                             maybe_broadcast_state(

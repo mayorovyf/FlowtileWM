@@ -20,8 +20,16 @@ pub const COMMANDS: &[&str] = &[
     "get_focus",
     "focus_next",
     "focus_prev",
+    "focus_workspace_up",
+    "focus_workspace_down",
     "scroll_strip_left",
     "scroll_strip_right",
+    "move_workspace_up",
+    "move_workspace_down",
+    "move_workspace_to_monitor_next",
+    "move_workspace_to_monitor_previous",
+    "move_column_to_workspace_up",
+    "move_column_to_workspace_down",
     "cycle_column_width",
     "move_window",
     "consume_window",
@@ -30,6 +38,8 @@ pub const COMMANDS: &[&str] = &[
     "toggle_tabbed",
     "toggle_maximized",
     "toggle_fullscreen",
+    "open_overview",
+    "close_overview",
     "toggle_overview",
     "touchpad_gesture",
     "capture_action",
@@ -297,6 +307,8 @@ mod tests {
         assert_eq!(bootstrap.protocol_version, PROTOCOL_VERSION);
         assert_eq!(bootstrap.command_pipe_name, COMMAND_PIPE_NAME);
         assert_eq!(bootstrap.event_stream_pipe_name, EVENT_STREAM_PIPE_NAME);
+        assert!(bootstrap.commands.contains(&"open_overview"));
+        assert!(bootstrap.commands.contains(&"close_overview"));
         assert!(bootstrap.commands.contains(&"toggle_overview"));
         assert!(bootstrap.commands.contains(&"touchpad_gesture"));
     }

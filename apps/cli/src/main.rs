@@ -184,13 +184,27 @@ fn parse_command(arguments: Vec<String>) -> Result<CliCommand, String> {
         "events" => Ok(CliCommand::Events),
         "focus-next" => Ok(CliCommand::simple("focus_next")),
         "focus-prev" => Ok(CliCommand::simple("focus_prev")),
+        "focus-workspace-up" => Ok(CliCommand::simple("focus_workspace_up")),
+        "focus-workspace-down" => Ok(CliCommand::simple("focus_workspace_down")),
         "scroll-left" => Ok(CliCommand::simple("scroll_strip_left")),
         "scroll-right" => Ok(CliCommand::simple("scroll_strip_right")),
+        "move-workspace-up" => Ok(CliCommand::simple("move_workspace_up")),
+        "move-workspace-down" => Ok(CliCommand::simple("move_workspace_down")),
+        "move-workspace-to-monitor-next" => {
+            Ok(CliCommand::simple("move_workspace_to_monitor_next"))
+        }
+        "move-workspace-to-monitor-previous" => {
+            Ok(CliCommand::simple("move_workspace_to_monitor_previous"))
+        }
+        "move-column-to-workspace-up" => Ok(CliCommand::simple("move_column_to_workspace_up")),
+        "move-column-to-workspace-down" => Ok(CliCommand::simple("move_column_to_workspace_down")),
         "cycle-column-width" => Ok(CliCommand::simple("cycle_column_width")),
         "toggle-floating" => Ok(CliCommand::simple("toggle_floating")),
         "toggle-tabbed" => Ok(CliCommand::simple("toggle_tabbed")),
         "toggle-maximized" => Ok(CliCommand::simple("toggle_maximized")),
         "toggle-fullscreen" => Ok(CliCommand::simple("toggle_fullscreen")),
+        "open-overview" => Ok(CliCommand::simple("open_overview")),
+        "close-overview" => Ok(CliCommand::simple("close_overview")),
         "toggle-overview" => Ok(CliCommand::simple("toggle_overview")),
         "reload-config" => Ok(CliCommand::simple("reload_config")),
         "dump-diagnostics" => Ok(CliCommand::simple("dump_diagnostics")),
@@ -206,12 +220,16 @@ fn print_help() {
     println!("  flowtile-cli snapshot");
     println!("  flowtile-cli events");
     println!("  flowtile-cli focus-next | focus-prev");
+    println!("  flowtile-cli focus-workspace-up | focus-workspace-down");
     println!("  flowtile-cli scroll-left | scroll-right");
+    println!("  flowtile-cli move-workspace-up | move-workspace-down");
+    println!("  flowtile-cli move-workspace-to-monitor-next | move-workspace-to-monitor-previous");
+    println!("  flowtile-cli move-column-to-workspace-up | move-column-to-workspace-down");
     println!("  flowtile-cli cycle-column-width");
     println!(
         "  flowtile-cli toggle-floating | toggle-tabbed | toggle-maximized | toggle-fullscreen"
     );
-    println!("  flowtile-cli toggle-overview");
+    println!("  flowtile-cli open-overview | close-overview | toggle-overview");
     println!("  flowtile-cli reload-config");
     println!("  flowtile-cli dump-diagnostics");
 }

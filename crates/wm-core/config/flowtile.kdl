@@ -16,7 +16,9 @@ input {
   bind-control-mode "coexistence"
   touchpad-override false
   hotkey "Win+H" "focus-prev"
-  hotkey "Win+J" "focus-next"
+  hotkey "Win+K" "focus-next"
+  hotkey "Win+U" "focus-workspace-up"
+  hotkey "Win+J" "focus-workspace-down"
   hotkey "Win+R" "cycle-column-width"
   hotkey "Win+Ctrl+Shift+F" "toggle-floating"
   hotkey "Win+Ctrl+Shift+Space" "toggle-fullscreen"

@@ -31,6 +31,7 @@ struct ApplyPlanContext {
     previous_focused_hwnd: Option<u64>,
     animate_window_switch: bool,
     animate_tiled_geometry: bool,
+    force_activate_focused_window: bool,
     refresh_visual_emphasis: bool,
 }
 
@@ -841,21 +842,24 @@ impl CoreDaemonRuntime {
                 let Some(actual_window) = actual_windows.get(&hwnd) else {
                     continue;
                 };
+                let target_rect =
+                    desired_workspace_window_rect(self.store.state(), workspace, geometry.rect);
+                let needs_geometry = if geometry.layer == WindowLayer::Tiled {
+                    needs_tiled_gapless_geometry_apply(actual_window.rect, target_rect)
+                } else {
+                    needs_geometry_apply(actual_window.rect, target_rect)
+                };
                 let activate = desired_focused_hwnd
                     .filter(|_| allow_activation_reassert)
                     .filter(|desired_hwnd| *desired_hwnd == hwnd)
                     .is_some_and(|desired_hwnd| {
                         needs_activation_apply(actual_focused_hwnd, desired_hwnd)
+                            || (apply_plan_context.force_activate_focused_window && needs_geometry)
                     });
                 let active_state_changed = apply_plan_context.previous_focused_hwnd
                     != desired_focused_hwnd
                     && (apply_plan_context.previous_focused_hwnd == Some(hwnd)
                         || desired_focused_hwnd == Some(hwnd));
-                let needs_geometry = if geometry.layer == WindowLayer::Tiled {
-                    needs_tiled_gapless_geometry_apply(actual_window.rect, geometry.rect)
-                } else {
-                    needs_geometry_apply(actual_window.rect, geometry.rect)
-                };
                 let visual_emphasis = (needs_geometry
                     || activate
                     || active_state_changed
@@ -886,7 +890,7 @@ impl CoreDaemonRuntime {
                         });
                     operations.push(ApplyOperation {
                         hwnd,
-                        rect: geometry.rect,
+                        rect: target_rect,
                         apply_geometry: needs_geometry,
                         activate,
                         suppress_visual_gap: should_suppress_visual_gap(
@@ -1073,6 +1077,7 @@ impl CoreDaemonRuntime {
             animate_window_switch: self
                 .should_animate_window_switch(previous_focused_hwnd, current_focused_hwnd),
             animate_tiled_geometry: should_animate_tiled_geometry(reason),
+            force_activate_focused_window: should_force_activation_reassert(reason),
             refresh_visual_emphasis: refresh_visual_emphasis
                 || previous_focused_hwnd != current_focused_hwnd,
         }
@@ -1599,6 +1604,53 @@ fn diff_config_sections(previous: &LoadedConfig, current: &LoadedConfig) -> Vec<
     changed_sections
 }
 
+fn desired_workspace_window_rect(
+    state: &WmState,
+    workspace: &flowtile_domain::Workspace,
+    rect: Rect,
+) -> Rect {
+    let workspace_is_active =
+        state.active_workspace_id_for_monitor(workspace.monitor_id) == Some(workspace.id);
+    if workspace_is_active {
+        return rect;
+    }
+
+    inactive_workspace_rect(state, workspace, rect)
+}
+
+fn inactive_workspace_rect(
+    state: &WmState,
+    workspace: &flowtile_domain::Workspace,
+    rect: Rect,
+) -> Rect {
+    let Some(active_workspace_id) = state.active_workspace_id_for_monitor(workspace.monitor_id)
+    else {
+        return rect;
+    };
+    let Some(active_workspace) = state.workspaces.get(&active_workspace_id) else {
+        return rect;
+    };
+
+    let active_region = active_workspace.strip.visible_region;
+    let workspace_region = workspace.strip.visible_region;
+    let active_index = active_workspace.vertical_index.min(i32::MAX as usize) as i32;
+    let workspace_index = workspace.vertical_index.min(i32::MAX as usize) as i32;
+    let relative_workspace_offset = workspace_index.saturating_sub(active_index);
+    let band_height = active_region.height.min(i32::MAX as u32) as i32;
+    let relative_x = rect.x.saturating_sub(workspace_region.x);
+    let relative_y = rect.y.saturating_sub(workspace_region.y);
+
+    Rect::new(
+        active_region.x.saturating_add(relative_x),
+        active_region
+            .y
+            .saturating_add(relative_workspace_offset.saturating_mul(band_height))
+            .saturating_add(relative_y),
+        rect.width,
+        rect.height,
+    )
+}
+
 fn operations_are_activation_only(
     snapshot: &PlatformSnapshot,
     operations: &[ApplyOperation],
@@ -1625,10 +1677,22 @@ fn should_animate_tiled_geometry(reason: &str) -> bool {
     matches!(
         reason,
         "manual-column-width-commit" | "manual-cycle-column-width"
-    )
+    ) || should_animate_workspace_switch(reason)
+}
+
+fn should_animate_workspace_switch(reason: &str) -> bool {
+    let token = normalize_reason_token(reason);
+    token.contains("focus-workspace-up") || token.contains("focus-workspace-down")
 }
 
 fn should_defer_post_apply_retry(reason: &str) -> bool {
+    matches!(
+        reason,
+        "manual-column-width-commit" | "manual-cycle-column-width"
+    )
+}
+
+fn should_force_activation_reassert(reason: &str) -> bool {
     matches!(
         reason,
         "manual-column-width-commit" | "manual-cycle-column-width"
@@ -1968,6 +2032,7 @@ mod tests {
         CorrelationId, DomainEvent, NavigationScope, Rect, ResizeEdge, RuntimeMode, WidthSemantics,
         WindowLayer,
     };
+    use flowtile_layout_engine::recompute_workspace;
     use flowtile_windows_adapter::{
         ApplyOperation, PlatformMonitorSnapshot, PlatformSnapshot, PlatformWindowSnapshot,
         WindowOpacityMode,
@@ -2295,6 +2360,7 @@ mod tests {
                     previous_focused_hwnd: Some(100),
                     animate_window_switch: true,
                     animate_tiled_geometry: false,
+                    force_activate_focused_window: false,
                     refresh_visual_emphasis: false,
                 },
             )
@@ -2470,6 +2536,7 @@ mod tests {
                     previous_focused_hwnd: Some(100),
                     animate_window_switch: true,
                     animate_tiled_geometry: false,
+                    force_activate_focused_window: false,
                     refresh_visual_emphasis: false,
                 },
             )
@@ -2544,6 +2611,7 @@ mod tests {
                     previous_focused_hwnd: Some(100),
                     animate_window_switch: true,
                     animate_tiled_geometry: false,
+                    force_activate_focused_window: false,
                     refresh_visual_emphasis: false,
                 },
             )
@@ -2628,6 +2696,7 @@ mod tests {
                     previous_focused_hwnd: Some(100),
                     animate_window_switch: false,
                     animate_tiled_geometry: false,
+                    force_activate_focused_window: false,
                     refresh_visual_emphasis: true,
                 },
             )
@@ -2693,6 +2762,67 @@ mod tests {
             .expect("column should exist after width cycle");
 
         assert_eq!(column.width_semantics, WidthSemantics::Fixed(584));
+    }
+
+    #[test]
+    fn cycle_column_width_reasserts_activation_for_the_focused_window() {
+        let mut runtime = CoreDaemonRuntime::new(RuntimeMode::WmOnly);
+        let snapshot = PlatformSnapshot {
+            foreground_hwnd: Some(100),
+            monitors: vec![PlatformMonitorSnapshot {
+                binding: "\\\\.\\DISPLAY1".to_string(),
+                work_area_rect: Rect::new(0, 0, 1200, 900),
+                dpi: 96,
+                is_primary: true,
+            }],
+            windows: vec![PlatformWindowSnapshot {
+                hwnd: 100,
+                title: "Window 100".to_string(),
+                class_name: "Notepad".to_string(),
+                process_id: 4242,
+                process_name: Some("notepad".to_string()),
+                rect: Rect::new(0, 0, 500, 900),
+                monitor_binding: "\\\\.\\DISPLAY1".to_string(),
+                is_visible: true,
+                is_focused: true,
+                management_candidate: true,
+            }],
+        };
+
+        runtime
+            .sync_snapshot(snapshot.clone(), true)
+            .expect("initial sync should succeed");
+        runtime
+            .store
+            .dispatch(DomainEvent::cycle_column_width(CorrelationId::new(10)))
+            .expect("width cycle should succeed");
+
+        let apply_plan_context = runtime.build_apply_plan_context(
+            Some(100),
+            Some(100),
+            "manual-cycle-column-width",
+            false,
+        );
+        let planned_operations = runtime
+            .plan_apply_operations_with_context(&snapshot, apply_plan_context)
+            .expect("apply plan should be computed");
+
+        let active_operation = planned_operations
+            .iter()
+            .find(|operation| operation.hwnd == 100)
+            .expect("focused window operation should exist");
+
+        assert!(active_operation.apply_geometry);
+        assert!(active_operation.activate);
+        assert_eq!(
+            active_operation.visual_emphasis,
+            Some(build_visual_emphasis(
+                true,
+                Some("notepad"),
+                "Notepad",
+                "Window 100",
+            ))
+        );
     }
 
     #[test]
@@ -3068,6 +3198,7 @@ mod tests {
                     previous_focused_hwnd: Some(100),
                     animate_window_switch: true,
                     animate_tiled_geometry: true,
+                    force_activate_focused_window: false,
                     refresh_visual_emphasis: false,
                 },
             )
@@ -3260,6 +3391,143 @@ mod tests {
         assert!(filtered.is_empty());
     }
 
+    #[test]
+    fn focus_workspace_down_moves_previous_workspace_windows_into_vertical_stack() {
+        let snapshot = PlatformSnapshot {
+            foreground_hwnd: Some(100),
+            monitors: vec![PlatformMonitorSnapshot {
+                binding: "\\\\.\\DISPLAY1".to_string(),
+                work_area_rect: Rect::new(0, 0, 1600, 900),
+                dpi: 96,
+                is_primary: true,
+            }],
+            windows: vec![PlatformWindowSnapshot {
+                hwnd: 100,
+                title: "Window 100".to_string(),
+                class_name: "Notepad".to_string(),
+                process_id: 4242,
+                process_name: Some("notepad".to_string()),
+                rect: Rect::new(0, 0, 420, 900),
+                monitor_binding: "\\\\.\\DISPLAY1".to_string(),
+                is_visible: true,
+                is_focused: true,
+                management_candidate: true,
+            }],
+        };
+        let mut runtime = CoreDaemonRuntime::new(RuntimeMode::WmOnly);
+        runtime
+            .sync_snapshot(snapshot.clone(), true)
+            .expect("initial sync should succeed");
+
+        let monitor_id = *runtime
+            .state()
+            .monitors
+            .keys()
+            .next()
+            .expect("monitor should exist");
+        let workspace_ids = ordered_workspace_ids_for_monitor(runtime.state(), monitor_id);
+        assert_eq!(workspace_ids.len(), 2);
+
+        runtime
+            .store
+            .dispatch(DomainEvent::focus_workspace_down(
+                CorrelationId::new(2),
+                None,
+            ))
+            .expect("focus workspace down should succeed");
+
+        let planned_operations = runtime
+            .plan_apply_operations_with_context(
+                &snapshot,
+                ApplyPlanContext {
+                    previous_focused_hwnd: Some(100),
+                    animate_window_switch: false,
+                    animate_tiled_geometry: false,
+                    force_activate_focused_window: false,
+                    refresh_visual_emphasis: true,
+                },
+            )
+            .expect("apply plan should be computed");
+        let operation = planned_operations
+            .iter()
+            .find(|operation| operation.hwnd == 100)
+            .expect("previous workspace window should be moved away");
+        let previous_window_id = runtime
+            .find_window_id_by_hwnd(100)
+            .expect("previous workspace window should exist");
+        let previous_workspace_projection = recompute_workspace(runtime.state(), workspace_ids[0])
+            .expect("previous workspace projection should exist");
+        let previous_local_rect = previous_workspace_projection
+            .window_geometries
+            .iter()
+            .find(|geometry| geometry.window_id == previous_window_id)
+            .expect("previous workspace geometry should exist")
+            .rect;
+
+        assert_eq!(
+            runtime.state().active_workspace_id_for_monitor(monitor_id),
+            Some(workspace_ids[1])
+        );
+        assert_eq!(runtime.state().focus.focused_window_id, None);
+        assert!(operation.apply_geometry);
+        assert!(!operation.activate);
+        assert_eq!(
+            operation.rect.y,
+            previous_local_rect
+                .y
+                .saturating_sub(snapshot.monitors[0].work_area_rect.height as i32)
+        );
+    }
+
+    #[test]
+    fn focus_workspace_down_uses_workspace_switch_animation_baseline() {
+        let snapshot = PlatformSnapshot {
+            foreground_hwnd: Some(100),
+            monitors: vec![PlatformMonitorSnapshot {
+                binding: "\\\\.\\DISPLAY1".to_string(),
+                work_area_rect: Rect::new(0, 0, 1600, 900),
+                dpi: 96,
+                is_primary: true,
+            }],
+            windows: vec![PlatformWindowSnapshot {
+                hwnd: 100,
+                title: "Window 100".to_string(),
+                class_name: "Notepad".to_string(),
+                process_id: 4242,
+                process_name: Some("notepad".to_string()),
+                rect: Rect::new(0, 0, 420, 900),
+                monitor_binding: "\\\\.\\DISPLAY1".to_string(),
+                is_visible: true,
+                is_focused: true,
+                management_candidate: true,
+            }],
+        };
+        let mut runtime = CoreDaemonRuntime::new(RuntimeMode::WmOnly);
+        runtime
+            .sync_snapshot(snapshot.clone(), true)
+            .expect("initial sync should succeed");
+        runtime
+            .store
+            .dispatch(DomainEvent::focus_workspace_down(
+                CorrelationId::new(2),
+                None,
+            ))
+            .expect("focus workspace down should succeed");
+
+        let apply_plan_context =
+            runtime.build_apply_plan_context(Some(100), None, "manual-focus-workspace-down", true);
+        let planned_operations = runtime
+            .plan_apply_operations_with_context(&snapshot, apply_plan_context)
+            .expect("apply plan should be computed");
+        let operation = planned_operations
+            .iter()
+            .find(|operation| operation.hwnd == 100)
+            .expect("previous workspace window should be moved away");
+
+        assert!(operation.apply_geometry);
+        assert!(operation.window_switch_animation.is_some());
+    }
+
     fn sample_snapshot(window_rect: Rect) -> PlatformSnapshot {
         PlatformSnapshot {
             foreground_hwnd: None,
@@ -3282,5 +3550,20 @@ mod tests {
                 management_candidate: true,
             }],
         }
+    }
+
+    fn ordered_workspace_ids_for_monitor(
+        state: &flowtile_domain::WmState,
+        monitor_id: flowtile_domain::MonitorId,
+    ) -> Vec<flowtile_domain::WorkspaceId> {
+        let workspace_set_id = state
+            .workspace_set_id_for_monitor(monitor_id)
+            .expect("workspace set should exist");
+        state
+            .workspace_sets
+            .get(&workspace_set_id)
+            .expect("workspace set should exist")
+            .ordered_workspace_ids
+            .clone()
     }
 }

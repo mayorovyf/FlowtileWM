@@ -206,6 +206,8 @@ pub struct Workspace {
     pub id: WorkspaceId,
     pub monitor_id: MonitorId,
     pub vertical_index: usize,
+    pub remembered_focused_window_id: Option<WindowId>,
+    pub remembered_focused_column_id: Option<ColumnId>,
     pub strip: ScrollingStrip,
     pub floating_layer: FloatingLayer,
     pub name: Option<String>,
@@ -223,6 +225,8 @@ impl Workspace {
             id,
             monitor_id,
             vertical_index,
+            remembered_focused_window_id: None,
+            remembered_focused_column_id: None,
             strip: ScrollingStrip {
                 ordered_column_ids: Vec::new(),
                 scroll_offset: 0,
@@ -703,6 +707,22 @@ impl WmState {
             .and_then(|workspace_set| workspace_set.ordered_workspace_ids.last().copied())
     }
 
+    pub fn monitor_ids_in_navigation_order(&self) -> Vec<MonitorId> {
+        let mut monitor_ids = self.monitors.keys().copied().collect::<Vec<_>>();
+        monitor_ids.sort_by_key(|monitor_id| {
+            self.monitors
+                .get(monitor_id)
+                .map_or((i32::MAX, i32::MAX, u64::MAX), |monitor| {
+                    (
+                        monitor.work_area_rect.x,
+                        monitor.work_area_rect.y,
+                        monitor_id.get(),
+                    )
+                })
+        });
+        monitor_ids
+    }
+
     pub fn normalize_workspace_set(&mut self, workspace_set_id: WorkspaceSetId) {
         let Some(monitor_id) = self
             .workspace_sets
@@ -711,26 +731,45 @@ impl WmState {
         else {
             return;
         };
+        let monitor_visible_region = self
+            .monitors
+            .get(&monitor_id)
+            .map(|monitor| monitor.work_area_rect)
+            .unwrap_or_default();
 
         let mut ordered_workspace_ids = self
             .workspace_sets
             .get(&workspace_set_id)
             .map(|workspace_set| workspace_set.ordered_workspace_ids.clone())
             .unwrap_or_default();
+        let active_workspace_id = self
+            .workspace_sets
+            .get(&workspace_set_id)
+            .map(|workspace_set| workspace_set.active_workspace_id);
 
         if ordered_workspace_ids.is_empty() {
             let workspace_id = self.runtime.allocate_workspace_id();
-            let visible_region = self
-                .monitors
-                .get(&monitor_id)
-                .map(|monitor| monitor.work_area_rect)
-                .unwrap_or_default();
             self.workspaces.insert(
                 workspace_id,
-                Workspace::empty(workspace_id, monitor_id, 0, visible_region),
+                Workspace::empty(workspace_id, monitor_id, 0, monitor_visible_region),
             );
             ordered_workspace_ids.push(workspace_id);
         }
+
+        let tail_workspace_id_before_collapse = ordered_workspace_ids.last().copied();
+        ordered_workspace_ids.retain(|workspace_id| {
+            let should_remove = self.is_workspace_empty(*workspace_id)
+                && Some(*workspace_id) != active_workspace_id
+                && Some(*workspace_id) != tail_workspace_id_before_collapse
+                && self
+                    .workspaces
+                    .get(workspace_id)
+                    .is_some_and(|workspace| workspace.name.is_none());
+            if should_remove {
+                self.workspaces.remove(workspace_id);
+            }
+            !should_remove
+        });
 
         while ordered_workspace_ids.len() > 1 {
             let last_index = ordered_workspace_ids.len() - 1;
@@ -751,18 +790,13 @@ impl WmState {
             && !self.is_workspace_empty(last_workspace_id)
         {
             let workspace_id = self.runtime.allocate_workspace_id();
-            let visible_region = self
-                .monitors
-                .get(&monitor_id)
-                .map(|monitor| monitor.work_area_rect)
-                .unwrap_or_default();
             self.workspaces.insert(
                 workspace_id,
                 Workspace::empty(
                     workspace_id,
                     monitor_id,
                     ordered_workspace_ids.len(),
-                    visible_region,
+                    monitor_visible_region,
                 ),
             );
             ordered_workspace_ids.push(workspace_id);
@@ -778,7 +812,10 @@ impl WmState {
         for (index, workspace_id) in ordered_workspace_ids.iter().copied().enumerate() {
             let is_empty = self.is_workspace_empty(workspace_id);
             if let Some(workspace) = self.workspaces.get_mut(&workspace_id) {
+                workspace.monitor_id = monitor_id;
                 workspace.vertical_index = index;
+                workspace.strip.visible_region = monitor_visible_region;
+                workspace.floating_layer.workspace_id = workspace_id;
                 workspace.is_ephemeral_empty_tail =
                     Some(workspace_id) == last_workspace_id && is_empty;
             }

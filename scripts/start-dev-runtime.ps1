@@ -82,7 +82,7 @@ if (-not (Test-Path $helperDll)) {
 }
 
 Write-Host ""
-Write-Host "Touchpad dev entrypoint is prepared."
+Write-Host "Dev runtime entrypoint is prepared."
 Write-Host "Daemon executable: $daemonExe"
 Write-Host "Helper DLL: $helperDll"
 Write-Host "Run logs: $runDir"

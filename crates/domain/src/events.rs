@@ -35,13 +35,23 @@ pub enum DomainEventName {
     ExplorerRestartObserved,
     CmdFocusNext,
     CmdFocusPrev,
+    CmdFocusWorkspaceUp,
+    CmdFocusWorkspaceDown,
     CmdScrollStripLeft,
     CmdScrollStripRight,
+    CmdMoveWorkspaceUp,
+    CmdMoveWorkspaceDown,
+    CmdMoveWorkspaceToMonitorNext,
+    CmdMoveWorkspaceToMonitorPrevious,
+    CmdMoveColumnToWorkspaceUp,
+    CmdMoveColumnToWorkspaceDown,
     CmdMoveWindow,
     CmdToggleFloating,
     CmdToggleTabbed,
     CmdToggleMaximized,
     CmdToggleFullscreen,
+    CmdOpenOverview,
+    CmdCloseOverview,
     CmdToggleOverview,
     CmdBeginColumnWidthResize,
     CmdUpdateColumnWidthPreview,
@@ -79,13 +89,23 @@ impl DomainEventName {
             Self::ExplorerRestartObserved => "EVT-EXPLORER-RESTART-OBSERVED",
             Self::CmdFocusNext => "EVT-CMD-FOCUS-NEXT",
             Self::CmdFocusPrev => "EVT-CMD-FOCUS-PREV",
+            Self::CmdFocusWorkspaceUp => "EVT-CMD-FOCUS-WORKSPACE-UP",
+            Self::CmdFocusWorkspaceDown => "EVT-CMD-FOCUS-WORKSPACE-DOWN",
             Self::CmdScrollStripLeft => "EVT-CMD-SCROLL-STRIP-LEFT",
             Self::CmdScrollStripRight => "EVT-CMD-SCROLL-STRIP-RIGHT",
+            Self::CmdMoveWorkspaceUp => "EVT-CMD-MOVE-WORKSPACE-UP",
+            Self::CmdMoveWorkspaceDown => "EVT-CMD-MOVE-WORKSPACE-DOWN",
+            Self::CmdMoveWorkspaceToMonitorNext => "EVT-CMD-MOVE-WORKSPACE-TO-MONITOR-NEXT",
+            Self::CmdMoveWorkspaceToMonitorPrevious => "EVT-CMD-MOVE-WORKSPACE-TO-MONITOR-PREVIOUS",
+            Self::CmdMoveColumnToWorkspaceUp => "EVT-CMD-MOVE-COLUMN-TO-WORKSPACE-UP",
+            Self::CmdMoveColumnToWorkspaceDown => "EVT-CMD-MOVE-COLUMN-TO-WORKSPACE-DOWN",
             Self::CmdMoveWindow => "EVT-CMD-MOVE-WINDOW",
             Self::CmdToggleFloating => "EVT-CMD-TOGGLE-FLOATING",
             Self::CmdToggleTabbed => "EVT-CMD-TOGGLE-TABBED",
             Self::CmdToggleMaximized => "EVT-CMD-TOGGLE-MAXIMIZED",
             Self::CmdToggleFullscreen => "EVT-CMD-TOGGLE-FULLSCREEN",
+            Self::CmdOpenOverview => "EVT-CMD-OPEN-OVERVIEW",
+            Self::CmdCloseOverview => "EVT-CMD-CLOSE-OVERVIEW",
             Self::CmdToggleOverview => "EVT-CMD-TOGGLE-OVERVIEW",
             Self::CmdBeginColumnWidthResize => "EVT-CMD-BEGIN-COLUMN-WIDTH-RESIZE",
             Self::CmdUpdateColumnWidthPreview => "EVT-CMD-UPDATE-COLUMN-WIDTH-PREVIEW",
@@ -191,6 +211,11 @@ pub struct WindowCommandPayload {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct WorkspaceCommandPayload {
+    pub monitor_id: Option<MonitorId>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct OverviewCommandPayload {
     pub monitor_id: Option<MonitorId>,
 }
@@ -239,12 +264,22 @@ pub enum DomainEventPayload {
     WindowFocusObserved(WindowFocusObservedPayload),
     CmdFocusNext(FocusCommandPayload),
     CmdFocusPrev(FocusCommandPayload),
+    CmdFocusWorkspaceUp(WorkspaceCommandPayload),
+    CmdFocusWorkspaceDown(WorkspaceCommandPayload),
     CmdScrollStripLeft(StripScrollPayload),
     CmdScrollStripRight(StripScrollPayload),
+    CmdMoveWorkspaceUp(WorkspaceCommandPayload),
+    CmdMoveWorkspaceDown(WorkspaceCommandPayload),
+    CmdMoveWorkspaceToMonitorNext(WorkspaceCommandPayload),
+    CmdMoveWorkspaceToMonitorPrevious(WorkspaceCommandPayload),
+    CmdMoveColumnToWorkspaceUp(WorkspaceCommandPayload),
+    CmdMoveColumnToWorkspaceDown(WorkspaceCommandPayload),
     CmdToggleFloating(WindowCommandPayload),
     CmdToggleTabbed(WindowCommandPayload),
     CmdToggleMaximized(WindowCommandPayload),
     CmdToggleFullscreen(WindowCommandPayload),
+    CmdOpenOverview(OverviewCommandPayload),
+    CmdCloseOverview(OverviewCommandPayload),
     CmdToggleOverview(OverviewCommandPayload),
     CmdBeginColumnWidthResize(ColumnWidthResizePayload),
     CmdUpdateColumnWidthPreview(ColumnWidthPointerPayload),
@@ -383,6 +418,32 @@ impl DomainEvent {
         )
     }
 
+    pub fn focus_workspace_up(
+        correlation_id: CorrelationId,
+        monitor_id: Option<MonitorId>,
+    ) -> Self {
+        Self::new(
+            DomainEventName::CmdFocusWorkspaceUp,
+            EventCategory::UserInputDerived,
+            EventSource::InputCommand,
+            correlation_id,
+            DomainEventPayload::CmdFocusWorkspaceUp(WorkspaceCommandPayload { monitor_id }),
+        )
+    }
+
+    pub fn focus_workspace_down(
+        correlation_id: CorrelationId,
+        monitor_id: Option<MonitorId>,
+    ) -> Self {
+        Self::new(
+            DomainEventName::CmdFocusWorkspaceDown,
+            EventCategory::UserInputDerived,
+            EventSource::InputCommand,
+            correlation_id,
+            DomainEventPayload::CmdFocusWorkspaceDown(WorkspaceCommandPayload { monitor_id }),
+        )
+    }
+
     pub fn scroll_strip_left(
         correlation_id: CorrelationId,
         scope: NavigationScope,
@@ -408,6 +469,87 @@ impl DomainEvent {
             EventSource::InputCommand,
             correlation_id,
             DomainEventPayload::CmdScrollStripRight(StripScrollPayload { scope, step }),
+        )
+    }
+
+    pub fn move_workspace_up(correlation_id: CorrelationId, monitor_id: Option<MonitorId>) -> Self {
+        Self::new(
+            DomainEventName::CmdMoveWorkspaceUp,
+            EventCategory::UserInputDerived,
+            EventSource::InputCommand,
+            correlation_id,
+            DomainEventPayload::CmdMoveWorkspaceUp(WorkspaceCommandPayload { monitor_id }),
+        )
+    }
+
+    pub fn move_workspace_down(
+        correlation_id: CorrelationId,
+        monitor_id: Option<MonitorId>,
+    ) -> Self {
+        Self::new(
+            DomainEventName::CmdMoveWorkspaceDown,
+            EventCategory::UserInputDerived,
+            EventSource::InputCommand,
+            correlation_id,
+            DomainEventPayload::CmdMoveWorkspaceDown(WorkspaceCommandPayload { monitor_id }),
+        )
+    }
+
+    pub fn move_workspace_to_monitor_next(
+        correlation_id: CorrelationId,
+        monitor_id: Option<MonitorId>,
+    ) -> Self {
+        Self::new(
+            DomainEventName::CmdMoveWorkspaceToMonitorNext,
+            EventCategory::UserInputDerived,
+            EventSource::InputCommand,
+            correlation_id,
+            DomainEventPayload::CmdMoveWorkspaceToMonitorNext(WorkspaceCommandPayload {
+                monitor_id,
+            }),
+        )
+    }
+
+    pub fn move_workspace_to_monitor_previous(
+        correlation_id: CorrelationId,
+        monitor_id: Option<MonitorId>,
+    ) -> Self {
+        Self::new(
+            DomainEventName::CmdMoveWorkspaceToMonitorPrevious,
+            EventCategory::UserInputDerived,
+            EventSource::InputCommand,
+            correlation_id,
+            DomainEventPayload::CmdMoveWorkspaceToMonitorPrevious(WorkspaceCommandPayload {
+                monitor_id,
+            }),
+        )
+    }
+
+    pub fn move_column_to_workspace_up(
+        correlation_id: CorrelationId,
+        monitor_id: Option<MonitorId>,
+    ) -> Self {
+        Self::new(
+            DomainEventName::CmdMoveColumnToWorkspaceUp,
+            EventCategory::UserInputDerived,
+            EventSource::InputCommand,
+            correlation_id,
+            DomainEventPayload::CmdMoveColumnToWorkspaceUp(WorkspaceCommandPayload { monitor_id }),
+        )
+    }
+
+    pub fn move_column_to_workspace_down(
+        correlation_id: CorrelationId,
+        monitor_id: Option<MonitorId>,
+    ) -> Self {
+        Self::new(
+            DomainEventName::CmdMoveColumnToWorkspaceDown,
+            EventCategory::UserInputDerived,
+            EventSource::InputCommand,
+            correlation_id,
+            DomainEventPayload::CmdMoveColumnToWorkspaceDown(WorkspaceCommandPayload {
+                monitor_id,
+            }),
         )
     }
 
@@ -448,6 +590,26 @@ impl DomainEvent {
             EventSource::InputCommand,
             correlation_id,
             DomainEventPayload::CmdToggleFullscreen(WindowCommandPayload { window_id }),
+        )
+    }
+
+    pub fn open_overview(correlation_id: CorrelationId, monitor_id: Option<MonitorId>) -> Self {
+        Self::new(
+            DomainEventName::CmdOpenOverview,
+            EventCategory::UserInputDerived,
+            EventSource::InputCommand,
+            correlation_id,
+            DomainEventPayload::CmdOpenOverview(OverviewCommandPayload { monitor_id }),
+        )
+    }
+
+    pub fn close_overview(correlation_id: CorrelationId, monitor_id: Option<MonitorId>) -> Self {
+        Self::new(
+            DomainEventName::CmdCloseOverview,
+            EventCategory::UserInputDerived,
+            EventSource::InputCommand,
+            correlation_id,
+            DomainEventPayload::CmdCloseOverview(OverviewCommandPayload { monitor_id }),
         )
     }
 

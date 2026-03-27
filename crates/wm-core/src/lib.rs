@@ -1897,6 +1897,252 @@ mod tests {
     }
 
     #[test]
+    fn workspace_navigation_restores_focus_after_column_move() {
+        let mut store = StateStore::new(RuntimeMode::WmOnly);
+        let monitor_id = store
+            .state_mut()
+            .add_monitor(Rect::new(0, 0, 1600, 900), 96, true);
+
+        let window_a =
+            discover_tiled_window(&mut store, 1, monitor_id, 100, Rect::new(0, 0, 420, 900));
+        let window_b =
+            discover_tiled_window(&mut store, 2, monitor_id, 101, Rect::new(420, 0, 360, 900));
+
+        store
+            .dispatch(DomainEvent::move_column_to_workspace_down(
+                CorrelationId::new(3),
+                None,
+            ))
+            .expect("column move to workspace should succeed");
+
+        let workspace_ids = ordered_workspace_ids_for_monitor(store.state(), monitor_id);
+        let workspace_above = workspace_ids[0];
+        let workspace_below = workspace_ids[1];
+        assert_eq!(
+            store.state().active_workspace_id_for_monitor(monitor_id),
+            Some(workspace_below)
+        );
+        assert_eq!(store.state().focus.focused_window_id, Some(window_b));
+
+        store
+            .dispatch(DomainEvent::focus_workspace_up(CorrelationId::new(4), None))
+            .expect("focus workspace up should succeed");
+        assert_eq!(
+            store.state().active_workspace_id_for_monitor(monitor_id),
+            Some(workspace_above)
+        );
+        assert_eq!(store.state().focus.focused_window_id, Some(window_a));
+
+        store
+            .dispatch(DomainEvent::focus_workspace_down(
+                CorrelationId::new(5),
+                None,
+            ))
+            .expect("focus workspace down should succeed");
+        assert_eq!(
+            store.state().active_workspace_id_for_monitor(monitor_id),
+            Some(workspace_below)
+        );
+        assert_eq!(store.state().focus.focused_window_id, Some(window_b));
+    }
+
+    #[test]
+    fn empty_workspace_in_middle_collapses_after_column_move() {
+        let mut store = StateStore::new(RuntimeMode::WmOnly);
+        let monitor_id = store
+            .state_mut()
+            .add_monitor(Rect::new(0, 0, 1600, 900), 96, true);
+
+        let window_a =
+            discover_tiled_window(&mut store, 1, monitor_id, 100, Rect::new(0, 0, 420, 900));
+        let _window_b =
+            discover_tiled_window(&mut store, 2, monitor_id, 101, Rect::new(420, 0, 360, 900));
+
+        store
+            .dispatch(DomainEvent::move_column_to_workspace_down(
+                CorrelationId::new(3),
+                None,
+            ))
+            .expect("first column move should succeed");
+        let workspace_above = ordered_workspace_ids_for_monitor(store.state(), monitor_id)[0];
+
+        store
+            .dispatch(DomainEvent::focus_workspace_up(CorrelationId::new(4), None))
+            .expect("focus workspace up should succeed");
+        assert_eq!(store.state().focus.focused_window_id, Some(window_a));
+
+        store
+            .dispatch(DomainEvent::move_column_to_workspace_down(
+                CorrelationId::new(5),
+                None,
+            ))
+            .expect("second column move should succeed");
+
+        let workspace_ids = ordered_workspace_ids_for_monitor(store.state(), monitor_id);
+        assert_eq!(workspace_ids.len(), 2);
+        assert!(!workspace_ids.contains(&workspace_above));
+    }
+
+    #[test]
+    fn move_workspace_up_reorders_without_recreating_workspace() {
+        let mut store = StateStore::new(RuntimeMode::WmOnly);
+        let monitor_id = store
+            .state_mut()
+            .add_monitor(Rect::new(0, 0, 1600, 900), 96, true);
+
+        let _window_a =
+            discover_tiled_window(&mut store, 1, monitor_id, 100, Rect::new(0, 0, 420, 900));
+        let window_b =
+            discover_tiled_window(&mut store, 2, monitor_id, 101, Rect::new(420, 0, 360, 900));
+
+        store
+            .dispatch(DomainEvent::move_column_to_workspace_down(
+                CorrelationId::new(3),
+                None,
+            ))
+            .expect("column move to workspace should succeed");
+
+        let before = ordered_workspace_ids_for_monitor(store.state(), monitor_id);
+        let workspace_to_reorder = before[1];
+
+        store
+            .dispatch(DomainEvent::move_workspace_up(CorrelationId::new(4), None))
+            .expect("move workspace up should succeed");
+
+        let after = ordered_workspace_ids_for_monitor(store.state(), monitor_id);
+        assert_eq!(after[0], workspace_to_reorder);
+        assert_eq!(
+            store.state().active_workspace_id_for_monitor(monitor_id),
+            Some(workspace_to_reorder)
+        );
+        assert_eq!(
+            store
+                .state()
+                .windows
+                .get(&window_b)
+                .expect("window should exist")
+                .workspace_id,
+            workspace_to_reorder
+        );
+    }
+
+    #[test]
+    fn move_workspace_to_next_monitor_preserves_identity_and_focus() {
+        let mut store = StateStore::new(RuntimeMode::WmOnly);
+        let monitor_left = store
+            .state_mut()
+            .add_monitor(Rect::new(0, 0, 1600, 900), 96, true);
+        let monitor_right = store
+            .state_mut()
+            .add_monitor(Rect::new(1600, 0, 1600, 900), 96, false);
+
+        let _window_a =
+            discover_tiled_window(&mut store, 1, monitor_left, 100, Rect::new(0, 0, 420, 900));
+        let window_b = discover_tiled_window(
+            &mut store,
+            2,
+            monitor_left,
+            101,
+            Rect::new(420, 0, 360, 900),
+        );
+
+        store
+            .dispatch(DomainEvent::move_column_to_workspace_down(
+                CorrelationId::new(3),
+                None,
+            ))
+            .expect("column move to workspace should succeed");
+
+        let moved_workspace_id = store
+            .state()
+            .active_workspace_id_for_monitor(monitor_left)
+            .expect("active workspace should exist on left monitor");
+
+        store
+            .dispatch(DomainEvent::move_workspace_to_monitor_next(
+                CorrelationId::new(4),
+                None,
+            ))
+            .expect("move workspace to next monitor should succeed");
+
+        assert_eq!(store.state().focus.focused_monitor_id, Some(monitor_right));
+        assert_eq!(
+            store.state().active_workspace_id_for_monitor(monitor_right),
+            Some(moved_workspace_id)
+        );
+        assert_eq!(store.state().focus.focused_window_id, Some(window_b));
+        assert_eq!(
+            store
+                .state()
+                .workspaces
+                .get(&moved_workspace_id)
+                .expect("workspace should exist")
+                .monitor_id,
+            monitor_right
+        );
+        assert_eq!(
+            store
+                .state()
+                .windows
+                .get(&window_b)
+                .expect("window should exist")
+                .workspace_id,
+            moved_workspace_id
+        );
+        assert!(
+            ordered_workspace_ids_for_monitor(store.state(), monitor_right)
+                .contains(&moved_workspace_id)
+        );
+    }
+
+    #[test]
+    fn directional_overview_commands_are_not_reduced_to_blind_toggle() {
+        let mut store = StateStore::new(RuntimeMode::WmOnly);
+        let monitor_id = store
+            .state_mut()
+            .add_monitor(Rect::new(0, 0, 1600, 900), 96, true);
+
+        let _window =
+            discover_tiled_window(&mut store, 1, monitor_id, 100, Rect::new(0, 0, 420, 900));
+        let workspace_id = store
+            .state()
+            .active_workspace_id_for_monitor(monitor_id)
+            .expect("active workspace should exist");
+
+        store
+            .dispatch(DomainEvent::open_overview(CorrelationId::new(2), None))
+            .expect("open overview should succeed");
+        assert!(store.state().overview.is_open);
+        assert_eq!(store.state().overview.monitor_id, Some(monitor_id));
+        assert_eq!(store.state().overview.selection, Some(workspace_id));
+        assert_eq!(store.state().overview.projection_version, 1);
+
+        store
+            .dispatch(DomainEvent::open_overview(CorrelationId::new(3), None))
+            .expect("repeated open overview should succeed");
+        assert!(store.state().overview.is_open);
+        assert_eq!(store.state().overview.monitor_id, Some(monitor_id));
+        assert_eq!(store.state().overview.selection, Some(workspace_id));
+        assert_eq!(store.state().overview.projection_version, 1);
+
+        store
+            .dispatch(DomainEvent::close_overview(CorrelationId::new(4), None))
+            .expect("close overview should succeed");
+        assert!(!store.state().overview.is_open);
+        assert_eq!(store.state().overview.monitor_id, None);
+        assert_eq!(store.state().overview.selection, None);
+        assert_eq!(store.state().overview.projection_version, 2);
+
+        store
+            .dispatch(DomainEvent::close_overview(CorrelationId::new(5), None))
+            .expect("repeated close overview should succeed");
+        assert!(!store.state().overview.is_open);
+        assert_eq!(store.state().overview.monitor_id, None);
+        assert_eq!(store.state().overview.selection, None);
+        assert_eq!(store.state().overview.projection_version, 2);
+    }
+
+    #[test]
     fn reload_config_rejects_unsupported_bind_control_mode() {
         let mut runtime = CoreDaemonRuntime::new(RuntimeMode::WmOnly);
         let config_path = unique_config_test_path("bind-control-mode");
@@ -1936,6 +2182,49 @@ mod tests {
             .find(|geometry| geometry.window_id == window_id)
             .map(|geometry| (geometry.rect.x, geometry.rect.width))
             .expect("window geometry should exist")
+    }
+
+    fn discover_tiled_window(
+        store: &mut StateStore,
+        correlation: u64,
+        monitor_id: flowtile_domain::MonitorId,
+        hwnd: u64,
+        rect: Rect,
+    ) -> flowtile_domain::WindowId {
+        store
+            .dispatch(DomainEvent::window_discovered_with(
+                CorrelationId::new(correlation),
+                monitor_id,
+                hwnd,
+                Size::new(rect.width, rect.height),
+                rect,
+                WindowPlacement::AppendToWorkspaceEnd {
+                    mode: ColumnMode::Normal,
+                    width: WidthSemantics::Fixed(rect.width),
+                },
+                FocusBehavior::FollowNewWindow,
+            ))
+            .expect("window discovery should succeed");
+        store
+            .state()
+            .focus
+            .focused_window_id
+            .expect("discovered window should become focused")
+    }
+
+    fn ordered_workspace_ids_for_monitor(
+        state: &flowtile_domain::WmState,
+        monitor_id: flowtile_domain::MonitorId,
+    ) -> Vec<flowtile_domain::WorkspaceId> {
+        let workspace_set_id = state
+            .workspace_set_id_for_monitor(monitor_id)
+            .expect("workspace set should exist");
+        state
+            .workspace_sets
+            .get(&workspace_set_id)
+            .expect("workspace set should exist")
+            .ordered_workspace_ids
+            .clone()
     }
 
     fn sample_snapshot(hwnd: u64, rect: Rect, focused: bool) -> PlatformSnapshot {

@@ -957,8 +957,8 @@ mod tests {
             &TouchpadConfig {
                 override_enabled: true,
                 gestures: vec![TouchpadGestureBinding {
-                    gesture: "three-finger-swipe-left".to_string(),
-                    command: "focus-prev".to_string(),
+                    gesture: "three-finger-swipe-up".to_string(),
+                    command: "focus-workspace-down".to_string(),
                 }],
             },
             SystemTouchGestureSetting::Disabled,
@@ -975,8 +975,8 @@ mod tests {
             &TouchpadConfig {
                 override_enabled: true,
                 gestures: vec![TouchpadGestureBinding {
-                    gesture: "three-finger-swipe-left".to_string(),
-                    command: "focus-prev".to_string(),
+                    gesture: "three-finger-swipe-down".to_string(),
+                    command: "focus-workspace-up".to_string(),
                 }],
             },
             SystemTouchGestureSetting::Unknown("registry read failed".to_string()),
@@ -996,7 +996,7 @@ mod tests {
         let config = TouchpadConfig {
             override_enabled: true,
             gestures: vec![TouchpadGestureBinding {
-                gesture: "three-finger-swipe-left".to_string(),
+                gesture: "three-finger-swipe-up".to_string(),
                 command: "move-column-left".to_string(),
             }],
         };
@@ -1012,12 +1012,12 @@ mod tests {
             override_enabled: true,
             gestures: vec![
                 TouchpadGestureBinding {
-                    gesture: "three-finger-swipe-left".to_string(),
-                    command: "focus-prev".to_string(),
+                    gesture: "three-finger-swipe-up".to_string(),
+                    command: "focus-workspace-down".to_string(),
                 },
                 TouchpadGestureBinding {
-                    gesture: "three-finger-swipe-left".to_string(),
-                    command: "focus-next".to_string(),
+                    gesture: "three-finger-swipe-up".to_string(),
+                    command: "focus-workspace-up".to_string(),
                 },
             ],
         };
@@ -1033,8 +1033,8 @@ mod tests {
             &TouchpadConfig {
                 override_enabled: true,
                 gestures: vec![TouchpadGestureBinding {
-                    gesture: "three-finger-swipe-right".to_string(),
-                    command: "focus-next".to_string(),
+                    gesture: "three-finger-swipe-down".to_string(),
+                    command: "focus-workspace-up".to_string(),
                 }],
             },
             SystemTouchGestureSetting::Disabled,
@@ -1060,8 +1060,8 @@ mod tests {
             &TouchpadConfig {
                 override_enabled: true,
                 gestures: vec![TouchpadGestureBinding {
-                    gesture: "three-finger-swipe-left".to_string(),
-                    command: "focus-prev".to_string(),
+                    gesture: "three-finger-swipe-up".to_string(),
+                    command: "focus-workspace-down".to_string(),
                 }],
             },
             SystemTouchGestureSetting::Enabled,
@@ -1078,11 +1078,55 @@ mod tests {
     }
 
     #[test]
-    fn runtime_dispatches_normalized_touchpad_gesture_into_control_channel() {
+    fn runtime_dispatches_workspace_swipe_into_control_channel() {
         let bindings = TouchpadBindingSet::from_config(&TouchpadConfig {
             override_enabled: true,
             gestures: vec![TouchpadGestureBinding {
-                gesture: "three-finger-swipe-right".to_string(),
+                gesture: "three-finger-swipe-up".to_string(),
+                command: "focus-workspace-down".to_string(),
+            }],
+        })
+        .expect("bindings should normalize");
+        let (control_sender, control_receiver) = mpsc::channel::<ControlMessage>();
+        let listener = TouchpadListener::spawn_runtime_only(bindings, control_sender);
+
+        listener
+            .dispatch_gesture(TouchpadGesture::ThreeFingerSwipeUp)
+            .expect("gesture should dispatch");
+
+        let message = control_receiver
+            .recv()
+            .expect("command should be forwarded");
+        assert!(matches!(
+            message,
+            ControlMessage::Watch(WatchCommand::FocusWorkspaceDown)
+        ));
+    }
+
+    #[test]
+    fn resolves_workspace_swipe_to_existing_ipc_command() {
+        let command = ipc_command_for_touchpad_gesture(
+            &TouchpadConfig {
+                override_enabled: true,
+                gestures: vec![TouchpadGestureBinding {
+                    gesture: "three-finger-swipe-down".to_string(),
+                    command: "focus-workspace-up".to_string(),
+                }],
+            },
+            "three-finger-swipe-down",
+        )
+        .expect("gesture should resolve")
+        .expect("binding should exist");
+
+        assert_eq!(command, "focus_workspace_up");
+    }
+
+    #[test]
+    fn runtime_dispatches_horizontal_window_swipe_into_control_channel() {
+        let bindings = TouchpadBindingSet::from_config(&TouchpadConfig {
+            override_enabled: true,
+            gestures: vec![TouchpadGestureBinding {
+                gesture: "three-finger-swipe-left".to_string(),
                 command: "focus-next".to_string(),
             }],
         })
@@ -1091,7 +1135,7 @@ mod tests {
         let listener = TouchpadListener::spawn_runtime_only(bindings, control_sender);
 
         listener
-            .dispatch_gesture(TouchpadGesture::ThreeFingerSwipeRight)
+            .dispatch_gesture(TouchpadGesture::ThreeFingerSwipeLeft)
             .expect("gesture should dispatch");
 
         let message = control_receiver
@@ -1104,21 +1148,88 @@ mod tests {
     }
 
     #[test]
-    fn resolves_touchpad_gesture_to_existing_ipc_command() {
+    fn resolves_horizontal_window_swipe_to_existing_ipc_command() {
         let command = ipc_command_for_touchpad_gesture(
             &TouchpadConfig {
                 override_enabled: true,
                 gestures: vec![TouchpadGestureBinding {
-                    gesture: "three-finger-swipe-left".to_string(),
+                    gesture: "three-finger-swipe-right".to_string(),
                     command: "focus-prev".to_string(),
                 }],
             },
-            "three-finger-swipe-left",
+            "three-finger-swipe-right",
         )
         .expect("gesture should resolve")
         .expect("binding should exist");
 
         assert_eq!(command, "focus_prev");
+    }
+
+    #[test]
+    fn four_finger_vertical_swipes_resolve_to_directional_overview_commands() {
+        let config = TouchpadConfig {
+            override_enabled: true,
+            gestures: vec![
+                TouchpadGestureBinding {
+                    gesture: "four-finger-swipe-up".to_string(),
+                    command: "open-overview".to_string(),
+                },
+                TouchpadGestureBinding {
+                    gesture: "four-finger-swipe-down".to_string(),
+                    command: "close-overview".to_string(),
+                },
+            ],
+        };
+
+        let open_command = ipc_command_for_touchpad_gesture(&config, "four-finger-swipe-up")
+            .expect("up gesture should resolve")
+            .expect("up gesture should be bound");
+        let close_command = ipc_command_for_touchpad_gesture(&config, "four-finger-swipe-down")
+            .expect("down gesture should resolve")
+            .expect("down gesture should be bound");
+
+        assert_eq!(open_command, "open_overview");
+        assert_eq!(close_command, "close_overview");
+    }
+
+    #[test]
+    fn runtime_dispatches_directional_overview_gestures_into_control_channel() {
+        let bindings = TouchpadBindingSet::from_config(&TouchpadConfig {
+            override_enabled: true,
+            gestures: vec![
+                TouchpadGestureBinding {
+                    gesture: "four-finger-swipe-up".to_string(),
+                    command: "open-overview".to_string(),
+                },
+                TouchpadGestureBinding {
+                    gesture: "four-finger-swipe-down".to_string(),
+                    command: "close-overview".to_string(),
+                },
+            ],
+        })
+        .expect("bindings should normalize");
+        let (control_sender, control_receiver) = mpsc::channel::<ControlMessage>();
+        let listener = TouchpadListener::spawn_runtime_only(bindings, control_sender);
+
+        listener
+            .dispatch_gesture(TouchpadGesture::FourFingerSwipeUp)
+            .expect("open gesture should dispatch");
+        listener
+            .dispatch_gesture(TouchpadGesture::FourFingerSwipeDown)
+            .expect("close gesture should dispatch");
+
+        let first = control_receiver.recv().expect("open command should arrive");
+        let second = control_receiver
+            .recv()
+            .expect("close command should arrive");
+        assert!(matches!(
+            first,
+            ControlMessage::Watch(WatchCommand::OpenOverview)
+        ));
+        assert!(matches!(
+            second,
+            ControlMessage::Watch(WatchCommand::CloseOverview)
+        ));
     }
 
     #[test]
