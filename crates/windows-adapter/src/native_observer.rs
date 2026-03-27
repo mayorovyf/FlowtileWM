@@ -26,11 +26,13 @@ use windows_sys::Win32::{
 };
 
 use crate::{
-    LiveObservationOptions, ObservationEnvelope, ObservationKind, ObserverMessage,
-    WindowsAdapterError, dpi, native_snapshot,
+    AdapterPerfTelemetry, LiveObservationOptions, ObservationEnvelope, ObservationKind,
+    ObserverMessage, WindowsAdapterError, dpi, native_snapshot,
 };
 
 const RESUME_REVALIDATION_MULTIPLIER: u32 = 3;
+const PERIODIC_SCAN_BACKOFF_MULTIPLIER: u32 = 2;
+const MAX_PERIODIC_SCAN_INTERVAL_MULTIPLIER: u32 = 8;
 
 pub(crate) struct NativeObservationRuntime {
     stop_requested: Arc<AtomicBool>,
@@ -61,13 +63,14 @@ impl NativeObservationRuntime {
 pub(crate) fn spawn(
     options: LiveObservationOptions,
     sender: Sender<ObserverMessage>,
+    perf: Arc<AdapterPerfTelemetry>,
 ) -> Result<NativeObservationRuntime, WindowsAdapterError> {
     let stop_requested = Arc::new(AtomicBool::new(false));
     let stop_for_worker = Arc::clone(&stop_requested);
     let (startup_sender, startup_receiver) = mpsc::channel::<Result<u32, String>>();
 
     let worker = thread::spawn(move || {
-        run_observer(options, sender, stop_for_worker, startup_sender);
+        run_observer(options, sender, stop_for_worker, startup_sender, perf);
     });
 
     let thread_id = startup_receiver
@@ -93,6 +96,7 @@ fn run_observer(
     sender: Sender<ObserverMessage>,
     stop_requested: Arc<AtomicBool>,
     startup_sender: Sender<Result<u32, String>>,
+    perf: Arc<AdapterPerfTelemetry>,
 ) {
     let thread_id = {
         // SAFETY: `GetCurrentThreadId` is a parameterless Win32 query for the current thread.
@@ -139,6 +143,9 @@ fn run_observer(
     let _ = startup_sender.send(Ok(thread_id));
 
     let fallback_interval = Duration::from_millis(options.fallback_scan_interval_ms.max(1_000));
+    let max_periodic_scan_interval =
+        fallback_interval.saturating_mul(MAX_PERIODIC_SCAN_INTERVAL_MULTIPLIER);
+    let mut periodic_scan_interval = fallback_interval;
     let debounce = Duration::from_millis(options.debounce_ms.max(1));
     let mut last_emit_at = Instant::now();
     let mut last_periodic_scan_at = last_emit_at;
@@ -154,11 +161,15 @@ fn run_observer(
         if now.duration_since(last_loop_at)
             >= fallback_interval.saturating_mul(RESUME_REVALIDATION_MULTIPLIER)
         {
-            if !rescan_snapshot("resume-revalidation", &sender, &mut snapshot) {
-                break;
+            match rescan_snapshot("resume-revalidation", &sender, &mut snapshot, &perf) {
+                RescanSnapshotResult::Stop => break,
+                RescanSnapshotResult::Changed | RescanSnapshotResult::Warning => {
+                    last_emit_at = now;
+                }
+                RescanSnapshotResult::Unchanged => {}
             }
-            last_emit_at = now;
             last_periodic_scan_at = now;
+            periodic_scan_interval = fallback_interval;
             shared.clear_pending();
         } else if shared.pending.load(Ordering::Acquire)
             && now.duration_since(last_emit_at) >= debounce
@@ -167,19 +178,32 @@ fn run_observer(
             let hwnd = shared.last_hwnd.swap(0, Ordering::AcqRel) as u64;
             shared.pending.store(false, Ordering::Release);
 
-            match apply_incremental_event(event_type, hwnd, &sender, &mut snapshot) {
-                IncrementalApplyResult::Continue => {}
+            match apply_incremental_event(event_type, hwnd, &sender, &mut snapshot, &perf) {
+                IncrementalApplyResult::Continue => {
+                    periodic_scan_interval = fallback_interval;
+                }
                 IncrementalApplyResult::Rescanned => {
                     last_periodic_scan_at = now;
+                    periodic_scan_interval = fallback_interval;
                 }
                 IncrementalApplyResult::Stop => break,
             }
             last_emit_at = now;
-        } else if now.duration_since(last_periodic_scan_at) >= fallback_interval {
-            if !rescan_snapshot("periodic-full-scan", &sender, &mut snapshot) {
-                break;
+        } else if now.duration_since(last_periodic_scan_at) >= periodic_scan_interval {
+            match rescan_snapshot("periodic-full-scan", &sender, &mut snapshot, &perf) {
+                RescanSnapshotResult::Changed | RescanSnapshotResult::Warning => {
+                    last_emit_at = now;
+                    periodic_scan_interval = fallback_interval;
+                }
+                RescanSnapshotResult::Unchanged => {
+                    periodic_scan_interval = next_periodic_scan_interval(
+                        periodic_scan_interval,
+                        fallback_interval,
+                        max_periodic_scan_interval,
+                    );
+                }
+                RescanSnapshotResult::Stop => break,
             }
-            last_emit_at = now;
             last_periodic_scan_at = now;
         }
 
@@ -195,7 +219,9 @@ fn apply_incremental_event(
     hwnd: u64,
     sender: &Sender<ObserverMessage>,
     snapshot: &mut crate::PlatformSnapshot,
+    perf: &AdapterPerfTelemetry,
 ) -> IncrementalApplyResult {
+    let started_at = Instant::now();
     let reason = event_reason(event_type);
     let hwnd_known_before = snapshot_contains_hwnd(snapshot, hwnd);
     let updated = match event_type {
@@ -206,7 +232,8 @@ fn apply_incremental_event(
         _ => native_snapshot::refresh_window(snapshot, hwnd),
     };
 
-    match updated {
+    let mut refresh_failed = false;
+    let result = match updated {
         Ok(()) => {
             let hwnd_known_after = snapshot_contains_hwnd(snapshot, hwnd);
             if should_rescan_after_incremental_event(
@@ -214,10 +241,11 @@ fn apply_incremental_event(
                 hwnd_known_before,
                 hwnd_known_after,
             ) {
-                if rescan_snapshot("event-recovery-full-scan", sender, snapshot) {
-                    IncrementalApplyResult::Rescanned
-                } else {
-                    IncrementalApplyResult::Stop
+                match rescan_snapshot("event-recovery-full-scan", sender, snapshot, perf) {
+                    RescanSnapshotResult::Stop => IncrementalApplyResult::Stop,
+                    RescanSnapshotResult::Changed
+                    | RescanSnapshotResult::Unchanged
+                    | RescanSnapshotResult::Warning => IncrementalApplyResult::Rescanned,
                 }
             } else if sender
                 .send(ObserverMessage::Envelope(snapshot_envelope(
@@ -232,6 +260,7 @@ fn apply_incremental_event(
             }
         }
         Err(message) => {
+            refresh_failed = true;
             if sender
                 .send(ObserverMessage::Envelope(warning_envelope(
                     reason, &message,
@@ -240,13 +269,21 @@ fn apply_incremental_event(
             {
                 return IncrementalApplyResult::Stop;
             }
-            if rescan_snapshot("event-recovery-full-scan", sender, snapshot) {
-                IncrementalApplyResult::Rescanned
-            } else {
-                IncrementalApplyResult::Stop
+            match rescan_snapshot("event-recovery-full-scan", sender, snapshot, perf) {
+                RescanSnapshotResult::Stop => IncrementalApplyResult::Stop,
+                RescanSnapshotResult::Changed
+                | RescanSnapshotResult::Unchanged
+                | RescanSnapshotResult::Warning => IncrementalApplyResult::Rescanned,
             }
         }
+    };
+
+    perf.observer_incremental_event
+        .record_duration(started_at.elapsed());
+    if refresh_failed {
+        perf.observer_incremental_event.record_error();
     }
+    result
 }
 
 fn snapshot_contains_hwnd(snapshot: &crate::PlatformSnapshot, hwnd: u64) -> bool {
@@ -267,28 +304,66 @@ fn should_rescan_after_incremental_event(
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum RescanSnapshotResult {
+    Changed,
+    Unchanged,
+    Warning,
+    Stop,
+}
+
+fn next_periodic_scan_interval(
+    current_interval: Duration,
+    minimum_interval: Duration,
+    maximum_interval: Duration,
+) -> Duration {
+    current_interval
+        .max(minimum_interval)
+        .saturating_mul(PERIODIC_SCAN_BACKOFF_MULTIPLIER)
+        .min(maximum_interval.max(minimum_interval))
+}
+
 fn rescan_snapshot(
     reason: &str,
     sender: &Sender<ObserverMessage>,
     snapshot: &mut crate::PlatformSnapshot,
-) -> bool {
-    match native_snapshot::scan_snapshot() {
+    perf: &AdapterPerfTelemetry,
+) -> RescanSnapshotResult {
+    let started_at = Instant::now();
+    let result = match native_snapshot::scan_snapshot() {
         Ok(new_snapshot) => {
-            *snapshot = new_snapshot.clone();
-            sender
-                .send(ObserverMessage::Envelope(snapshot_envelope(
-                    reason,
-                    new_snapshot,
-                )))
-                .is_ok()
+            if *snapshot == new_snapshot {
+                perf.observer_rescan_snapshot.record_skip();
+                RescanSnapshotResult::Unchanged
+            } else {
+                *snapshot = new_snapshot.clone();
+                if sender
+                    .send(ObserverMessage::Envelope(snapshot_envelope(
+                        reason,
+                        new_snapshot,
+                    )))
+                    .is_ok()
+                {
+                    RescanSnapshotResult::Changed
+                } else {
+                    RescanSnapshotResult::Stop
+                }
+            }
         }
         Err(error) => sender
             .send(ObserverMessage::Envelope(warning_envelope(
                 reason,
                 &error.to_string(),
             )))
-            .is_ok(),
+            .map(|_| RescanSnapshotResult::Warning)
+            .unwrap_or(RescanSnapshotResult::Stop),
+    };
+    perf.observer_rescan_snapshot
+        .record_duration(started_at.elapsed());
+    if matches!(result, RescanSnapshotResult::Warning) {
+        perf.observer_rescan_snapshot.record_error();
     }
+    result
 }
 
 fn register_hooks() -> Result<Vec<HWINEVENTHOOK>, String> {
@@ -505,12 +580,14 @@ impl ObserverSignalState {
 
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use windows_sys::Win32::UI::WindowsAndMessaging::{
         EVENT_OBJECT_CREATE, EVENT_OBJECT_DESTROY, EVENT_OBJECT_HIDE, EVENT_OBJECT_LOCATIONCHANGE,
         EVENT_OBJECT_SHOW, EVENT_SYSTEM_FOREGROUND,
     };
 
-    use super::should_rescan_after_incremental_event;
+    use super::{next_periodic_scan_interval, should_rescan_after_incremental_event};
 
     #[test]
     fn create_for_unknown_hwnd_escalates_to_full_scan() {
@@ -591,5 +668,31 @@ mod tests {
             false,
             false,
         ));
+    }
+
+    #[test]
+    fn clean_periodic_rescan_uses_backoff() {
+        let minimum = Duration::from_secs(2);
+        let maximum = Duration::from_secs(16);
+
+        assert_eq!(
+            next_periodic_scan_interval(minimum, minimum, maximum),
+            Duration::from_secs(4)
+        );
+        assert_eq!(
+            next_periodic_scan_interval(Duration::from_secs(8), minimum, maximum),
+            Duration::from_secs(16)
+        );
+    }
+
+    #[test]
+    fn periodic_rescan_backoff_respects_maximum_interval() {
+        let minimum = Duration::from_secs(2);
+        let maximum = Duration::from_secs(12);
+
+        assert_eq!(
+            next_periodic_scan_interval(Duration::from_secs(8), minimum, maximum),
+            Duration::from_secs(12)
+        );
     }
 }

@@ -1,9 +1,11 @@
 #![forbid(unsafe_code)]
 
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
 
 use flowtile_config_rules::{LoadedConfig, bootstrap as config_bootstrap};
-use flowtile_diagnostics::{DiagnosticRecord, bootstrap as diagnostics_bootstrap};
+use flowtile_diagnostics::{
+    AtomicPerfMetric, DiagnosticRecord, PerfTelemetrySnapshot, bootstrap as diagnostics_bootstrap,
+};
 use flowtile_domain::{
     BootstrapProfile, ColumnId, ColumnMode, MonitorId, RuntimeMode, StateVersion, WidthSemantics,
     WindowId, WmState, WorkspaceId,
@@ -215,10 +217,33 @@ impl RuntimeCycleReport {
     }
 }
 
+#[derive(Debug, Default)]
+struct RuntimePerfTelemetry {
+    command_cycle: AtomicPerfMetric,
+    observation_sync: AtomicPerfMetric,
+    post_apply_validation: AtomicPerfMetric,
+    config_reload: AtomicPerfMetric,
+}
+
+impl RuntimePerfTelemetry {
+    fn snapshot(&self) -> PerfTelemetrySnapshot {
+        PerfTelemetrySnapshot {
+            metrics: vec![
+                self.command_cycle.snapshot("runtime.command-cycle"),
+                self.observation_sync.snapshot("runtime.observation-sync"),
+                self.post_apply_validation
+                    .snapshot("runtime.post-apply-validation"),
+                self.config_reload.snapshot("runtime.config-reload"),
+            ],
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct CoreDaemonRuntime {
     store: StateStore,
     adapter: WindowsAdapter,
+    perf: Arc<RuntimePerfTelemetry>,
     active_config: LoadedConfig,
     last_valid_config: LoadedConfig,
     last_snapshot: Option<PlatformSnapshot>,

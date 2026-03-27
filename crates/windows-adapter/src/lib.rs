@@ -3,10 +3,14 @@
 use std::{
     collections::{BTreeSet, HashMap},
     fmt,
-    sync::mpsc::{self, Receiver, RecvTimeoutError},
-    time::Duration,
+    sync::{
+        Arc,
+        mpsc::{self, Receiver, RecvTimeoutError},
+    },
+    time::{Duration, Instant},
 };
 
+use flowtile_diagnostics::{AtomicPerfMetric, PerfTelemetrySnapshot};
 use flowtile_domain::Rect;
 use serde::{Deserialize, Serialize};
 
@@ -398,12 +402,39 @@ impl From<std::io::Error> for WindowsAdapterError {
     }
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct WindowsAdapter;
+#[derive(Clone, Debug)]
+pub struct WindowsAdapter {
+    perf: Arc<AdapterPerfTelemetry>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct AdapterPerfTelemetry {
+    scan_snapshot: AtomicPerfMetric,
+    apply_operations: AtomicPerfMetric,
+    observer_incremental_event: AtomicPerfMetric,
+    observer_rescan_snapshot: AtomicPerfMetric,
+}
+
+impl AdapterPerfTelemetry {
+    fn snapshot(&self) -> PerfTelemetrySnapshot {
+        PerfTelemetrySnapshot {
+            metrics: vec![
+                self.scan_snapshot.snapshot("adapter.scan-snapshot"),
+                self.apply_operations.snapshot("adapter.apply-operations"),
+                self.observer_incremental_event
+                    .snapshot("adapter.observer.incremental-event"),
+                self.observer_rescan_snapshot
+                    .snapshot("adapter.observer.full-rescan"),
+            ],
+        }
+    }
+}
 
 impl WindowsAdapter {
     pub fn new() -> Self {
-        Self
+        Self {
+            perf: Arc::new(AdapterPerfTelemetry::default()),
+        }
     }
 
     pub fn spawn_observer(
@@ -411,15 +442,27 @@ impl WindowsAdapter {
         options: LiveObservationOptions,
     ) -> Result<ObservationStream, WindowsAdapterError> {
         let (sender, receiver) = mpsc::channel::<ObserverMessage>();
-        let runtime = native_observer::spawn(options, sender)?;
+        let runtime = native_observer::spawn(options, sender, Arc::clone(&self.perf))?;
         Ok(ObservationStream {
             backend: ObservationBackend::Native(runtime),
             receiver,
         })
     }
 
+    pub fn perf_snapshot(&self) -> PerfTelemetrySnapshot {
+        self.perf.snapshot()
+    }
+
     pub fn scan_snapshot(&self) -> Result<PlatformSnapshot, WindowsAdapterError> {
-        native_snapshot::scan_snapshot()
+        let started_at = Instant::now();
+        let result = native_snapshot::scan_snapshot();
+        self.perf
+            .scan_snapshot
+            .record_duration(started_at.elapsed());
+        if result.is_err() {
+            self.perf.scan_snapshot.record_error();
+        }
+        result
     }
 
     pub fn apply_operations(
@@ -427,10 +470,28 @@ impl WindowsAdapter {
         operations: &[ApplyOperation],
     ) -> Result<ApplyBatchResult, WindowsAdapterError> {
         if operations.is_empty() {
+            self.perf.apply_operations.record_skip();
             return Ok(ApplyBatchResult::default());
         }
 
-        Ok(native_apply::apply_operations(operations))
+        let started_at = Instant::now();
+        let result = Ok(native_apply::apply_operations(operations));
+        self.perf
+            .apply_operations
+            .record_duration(started_at.elapsed());
+        if result
+            .as_ref()
+            .is_ok_and(|batch| !batch.failures.is_empty())
+        {
+            self.perf.apply_operations.record_error();
+        }
+        result
+    }
+}
+
+impl Default for WindowsAdapter {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -479,8 +540,8 @@ mod tests {
 
     use super::{
         ObservationEnvelope, ObservationKind, PRIMARY_DISCOVERY_API, PlatformMonitorSnapshot,
-        PlatformSnapshot, PlatformWindowSnapshot, SnapshotDiff, bootstrap, diff_snapshots,
-        missing_monitor_bindings, needs_activation_apply, needs_geometry_apply,
+        PlatformSnapshot, PlatformWindowSnapshot, SnapshotDiff, WindowsAdapter, bootstrap,
+        diff_snapshots, missing_monitor_bindings, needs_activation_apply, needs_geometry_apply,
         needs_tiled_gapless_geometry_apply,
     };
 
@@ -604,6 +665,24 @@ mod tests {
         assert!(!needs_activation_apply(Some(20), 20));
         assert!(needs_activation_apply(Some(10), 20));
         assert!(needs_activation_apply(None, 20));
+    }
+
+    #[test]
+    fn exposes_perf_snapshot_for_hot_paths() {
+        let adapter = WindowsAdapter::new();
+        adapter.perf.scan_snapshot.record_skip();
+
+        let perf = adapter.perf_snapshot();
+        assert!(
+            perf.metrics
+                .iter()
+                .any(|metric| metric.metric == "adapter.scan-snapshot")
+        );
+        assert!(
+            perf.metrics
+                .iter()
+                .any(|metric| metric.metric == "adapter.apply-operations")
+        );
     }
 
     #[test]

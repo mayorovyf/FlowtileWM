@@ -2,6 +2,7 @@
 
 mod transport;
 
+use flowtile_diagnostics::PerfTelemetrySnapshot;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -200,6 +201,8 @@ pub struct DiagnosticsProjection {
     pub touchpad_override_status: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub touchpad_override_detail: Option<String>,
+    #[serde(default)]
+    pub perf: PerfTelemetrySnapshot,
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]

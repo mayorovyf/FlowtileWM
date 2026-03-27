@@ -7,6 +7,7 @@ use flowtile_config_rules::{
     HotkeyBinding, LoadedConfig, TouchpadConfig, WindowRuleInput, bootstrap as config_bootstrap,
     classify_window, default_loaded_config, ensure_default_config, load_from_path, load_or_default,
 };
+use flowtile_diagnostics::{AtomicPerfMetric, PerfTelemetrySnapshot};
 use flowtile_domain::{
     BindControlMode, ColumnId, CorrelationId, DomainEvent, DomainEventPayload, FocusBehavior,
     MonitorId, Rect, ResizeEdge, RuntimeMode, TopologyRole, WidthSemantics, WindowId, WindowLayer,
@@ -21,7 +22,9 @@ use flowtile_windows_adapter::{
     needs_activation_apply, needs_geometry_apply, needs_tiled_gapless_geometry_apply,
 };
 
-use crate::{CoreDaemonRuntime, RuntimeCycleReport, RuntimeError, StateStore};
+use crate::{
+    CoreDaemonRuntime, RuntimeCycleReport, RuntimeError, RuntimePerfTelemetry, StateStore,
+};
 
 const FOCUS_OBSERVATION_GRACE: Duration = Duration::from_millis(250);
 const GEOMETRY_SETTLE_GRACE: Duration = Duration::from_millis(180);
@@ -63,6 +66,7 @@ impl CoreDaemonRuntime {
         let mut runtime = Self {
             store,
             adapter,
+            perf: std::sync::Arc::new(RuntimePerfTelemetry::default()),
             active_config: startup_config.clone(),
             last_valid_config: startup_config,
             last_snapshot: None,
@@ -162,6 +166,19 @@ impl CoreDaemonRuntime {
         self.management_enabled
     }
 
+    pub fn perf_snapshot(&self) -> PerfTelemetrySnapshot {
+        let mut metrics = self.perf.snapshot().metrics;
+        metrics.extend(self.adapter.perf_snapshot().metrics);
+        metrics.sort_by(|left, right| {
+            right
+                .total_duration_us
+                .cmp(&left.total_duration_us)
+                .then_with(|| right.samples.cmp(&left.samples))
+                .then_with(|| left.metric.cmp(&right.metric))
+        });
+        PerfTelemetrySnapshot { metrics }
+    }
+
     pub fn request_emergency_unwind(&mut self, reason: &str) {
         self.management_enabled = false;
         self.push_degraded_reason(format!("emergency-unwind:{reason}"));
@@ -173,67 +190,72 @@ impl CoreDaemonRuntime {
         dry_run: bool,
         reason: &str,
     ) -> Result<RuntimeCycleReport, RuntimeError> {
-        let snapshot = self.adapter.scan_snapshot()?;
-        let _ = self.sync_snapshot_with_reason(snapshot.clone(), true, "command-pre-sync")?;
-        let previous_focused_hwnd = self.current_focused_hwnd();
-        let transition = self.store.dispatch(event)?;
-        let apply_plan_context = self.build_apply_plan_context(
-            previous_focused_hwnd,
-            self.current_focused_hwnd(),
-            reason,
-            false,
-        );
-        self.arm_pending_focus_claim(previous_focused_hwnd);
-        let planned_operations = if self.management_enabled {
-            self.plan_apply_operations_with_context(&snapshot, apply_plan_context)?
-        } else {
-            Vec::new()
-        };
-        let apply_result = if dry_run || !self.management_enabled {
-            ApplyBatchResult::default()
-        } else {
-            self.adapter.apply_operations(&planned_operations)?
-        };
-        self.arm_pending_geometry_settle(reason, planned_operations.len(), dry_run);
-        let apply_failure_messages = apply_result
-            .failures
-            .iter()
-            .map(|failure| format!("hwnd {}: {}", failure.hwnd, failure.message))
-            .collect::<Vec<_>>();
-        let strip_movement_logs = self.describe_strip_movements(&snapshot, &planned_operations);
-        let window_trace_logs =
-            self.describe_window_trace("plan", &snapshot, &planned_operations, None);
+        let started_at = Instant::now();
+        let result = (|| {
+            let snapshot = self.adapter.scan_snapshot()?;
+            let _ = self.sync_snapshot_with_reason(snapshot.clone(), true, "command-pre-sync")?;
+            let previous_focused_hwnd = self.current_focused_hwnd();
+            let transition = self.store.dispatch(event)?;
+            let apply_plan_context = self.build_apply_plan_context(
+                previous_focused_hwnd,
+                self.current_focused_hwnd(),
+                reason,
+                false,
+            );
+            self.arm_pending_focus_claim(previous_focused_hwnd);
+            let planned_operations = if self.management_enabled {
+                self.plan_apply_operations_with_context(&snapshot, apply_plan_context)?
+            } else {
+                Vec::new()
+            };
+            let apply_result = if dry_run || !self.management_enabled {
+                ApplyBatchResult::default()
+            } else {
+                self.adapter.apply_operations(&planned_operations)?
+            };
+            self.arm_pending_geometry_settle(reason, planned_operations.len(), dry_run);
+            let apply_failure_messages = apply_result
+                .failures
+                .iter()
+                .map(|failure| format!("hwnd {}: {}", failure.hwnd, failure.message))
+                .collect::<Vec<_>>();
+            let strip_movement_logs = self.describe_strip_movements(&snapshot, &planned_operations);
+            let window_trace_logs =
+                self.describe_window_trace("plan", &snapshot, &planned_operations, None);
 
-        let now = unix_timestamp();
-        self.store.state_mut().runtime.last_full_scan_at = Some(now);
-        if transition.affected_workspace_id.is_some() || !planned_operations.is_empty() {
-            self.store.state_mut().runtime.last_reconcile_at = Some(now);
-        }
-        self.last_snapshot = Some(snapshot.clone());
+            let now = unix_timestamp();
+            self.store.state_mut().runtime.last_full_scan_at = Some(now);
+            if transition.affected_workspace_id.is_some() || !planned_operations.is_empty() {
+                self.store.state_mut().runtime.last_reconcile_at = Some(now);
+            }
+            self.last_snapshot = Some(snapshot.clone());
 
-        let mut report = RuntimeCycleReport {
-            monitor_count: snapshot.monitors.len(),
-            observed_window_count: snapshot.windows.len(),
-            discovered_windows: 0,
-            destroyed_windows: 0,
-            focused_hwnd: snapshot.actual_foreground_hwnd(),
-            observation_reason: Some(reason.to_string()),
-            planned_operations: planned_operations.len(),
-            applied_operations: apply_result.applied,
-            apply_failures: apply_result.failures.len(),
-            apply_failure_messages,
-            recovery_rescans: 0,
-            validation_remaining_operations: 0,
-            recovery_actions: Vec::new(),
-            management_enabled: self.management_enabled,
-            dry_run,
-            degraded_reasons: self.store.state().runtime.degraded_flags.clone(),
-            strip_movement_logs,
-            window_trace_logs,
-            validation_trace_logs: Vec::new(),
-        };
-        self.validate_after_apply(&mut report, dry_run)?;
-        Ok(report)
+            let mut report = RuntimeCycleReport {
+                monitor_count: snapshot.monitors.len(),
+                observed_window_count: snapshot.windows.len(),
+                discovered_windows: 0,
+                destroyed_windows: 0,
+                focused_hwnd: snapshot.actual_foreground_hwnd(),
+                observation_reason: Some(reason.to_string()),
+                planned_operations: planned_operations.len(),
+                applied_operations: apply_result.applied,
+                apply_failures: apply_result.failures.len(),
+                apply_failure_messages,
+                recovery_rescans: 0,
+                validation_remaining_operations: 0,
+                recovery_actions: Vec::new(),
+                management_enabled: self.management_enabled,
+                dry_run,
+                degraded_reasons: self.store.state().runtime.degraded_flags.clone(),
+                strip_movement_logs,
+                window_trace_logs,
+                validation_trace_logs: Vec::new(),
+            };
+            self.validate_after_apply(&mut report, dry_run)?;
+            Ok(report)
+        })();
+        record_perf_metric(&self.perf.command_cycle, started_at, &result);
+        result
     }
 
     pub fn begin_column_width_resize(
@@ -293,65 +315,71 @@ impl CoreDaemonRuntime {
     }
 
     pub fn reload_config(&mut self, dry_run: bool) -> Result<RuntimeCycleReport, RuntimeError> {
-        let config_path = self.store.state().config_projection.source_path.clone();
-        let correlation_id = self.next_correlation_id();
-        let _ = self.store.dispatch(DomainEvent::config_reload_requested(
-            correlation_id,
-            flowtile_domain::EventSource::InputCommand,
-            Some(config_path.clone()),
-        ))?;
+        let started_at = Instant::now();
+        let result = (|| {
+            let config_path = self.store.state().config_projection.source_path.clone();
+            let correlation_id = self.next_correlation_id();
+            let _ = self.store.dispatch(DomainEvent::config_reload_requested(
+                correlation_id,
+                flowtile_domain::EventSource::InputCommand,
+                Some(config_path.clone()),
+            ))?;
 
-        match load_from_path(&config_path, self.next_config_generation) {
-            Ok(loaded_config) => {
-                ensure_supported_bind_control_mode(loaded_config.projection.bind_control_mode)?;
-                let changed_sections = diff_config_sections(&self.active_config, &loaded_config);
-                let rule_ids = loaded_config
-                    .rules
-                    .iter()
-                    .map(|rule| rule.id.clone())
-                    .collect::<Vec<_>>();
-                self.active_config = loaded_config.clone();
-                self.last_valid_config = loaded_config.clone();
-                self.next_config_generation += 1;
+            match load_from_path(&config_path, self.next_config_generation) {
+                Ok(loaded_config) => {
+                    ensure_supported_bind_control_mode(loaded_config.projection.bind_control_mode)?;
+                    let changed_sections =
+                        diff_config_sections(&self.active_config, &loaded_config);
+                    let rule_ids = loaded_config
+                        .rules
+                        .iter()
+                        .map(|rule| rule.id.clone())
+                        .collect::<Vec<_>>();
+                    self.active_config = loaded_config.clone();
+                    self.last_valid_config = loaded_config.clone();
+                    self.next_config_generation += 1;
 
-                let reload_succeeded_correlation = self.next_correlation_id();
-                self.store.dispatch(DomainEvent::config_reload_succeeded(
-                    reload_succeeded_correlation,
-                    loaded_config.projection.config_version,
-                    changed_sections,
-                    loaded_config.projection.clone(),
-                ))?;
-                let rules_updated_correlation = self.next_correlation_id();
-                self.store.dispatch(DomainEvent::rules_updated(
-                    rules_updated_correlation,
-                    loaded_config.projection.config_version,
-                    rule_ids,
-                    loaded_config.projection.active_rule_count,
-                ))?;
+                    let reload_succeeded_correlation = self.next_correlation_id();
+                    self.store.dispatch(DomainEvent::config_reload_succeeded(
+                        reload_succeeded_correlation,
+                        loaded_config.projection.config_version,
+                        changed_sections,
+                        loaded_config.projection.clone(),
+                    ))?;
+                    let rules_updated_correlation = self.next_correlation_id();
+                    self.store.dispatch(DomainEvent::rules_updated(
+                        rules_updated_correlation,
+                        loaded_config.projection.config_version,
+                        rule_ids,
+                        loaded_config.projection.active_rule_count,
+                    ))?;
 
-                let report_correlation = self.next_correlation_id();
-                self.dispatch_command(
-                    DomainEvent::config_reload_requested(
-                        report_correlation,
-                        flowtile_domain::EventSource::ConfigRules,
-                        Some(config_path),
-                    ),
-                    dry_run,
-                    "config-reload",
-                )
+                    let report_correlation = self.next_correlation_id();
+                    self.dispatch_command(
+                        DomainEvent::config_reload_requested(
+                            report_correlation,
+                            flowtile_domain::EventSource::ConfigRules,
+                            Some(config_path),
+                        ),
+                        dry_run,
+                        "config-reload",
+                    )
+                }
+                Err(error) => {
+                    let failure_correlation = self.next_correlation_id();
+                    let _ = self.store.dispatch(DomainEvent::config_reload_failed(
+                        failure_correlation,
+                        "config-reload-failed",
+                        error.to_string(),
+                    ));
+                    self.active_config = self.last_valid_config.clone();
+                    self.push_degraded_reason("config-reload-failed".to_string());
+                    Err(RuntimeError::Config(error.to_string()))
+                }
             }
-            Err(error) => {
-                let failure_correlation = self.next_correlation_id();
-                let _ = self.store.dispatch(DomainEvent::config_reload_failed(
-                    failure_correlation,
-                    "config-reload-failed",
-                    error.to_string(),
-                ));
-                self.active_config = self.last_valid_config.clone();
-                self.push_degraded_reason("config-reload-failed".to_string());
-                Err(RuntimeError::Config(error.to_string()))
-            }
-        }
+        })();
+        record_perf_metric(&self.perf.config_reload, started_at, &result);
+        result
     }
 
     pub fn scan_and_sync(&mut self, dry_run: bool) -> Result<RuntimeCycleReport, RuntimeError> {
@@ -424,92 +452,97 @@ impl CoreDaemonRuntime {
         dry_run: bool,
         observation_reason: &str,
     ) -> Result<RuntimeCycleReport, RuntimeError> {
-        snapshot.sort_for_stability();
-        self.note_observation_reason(observation_reason);
-        let previous_focused_hwnd = self.current_focused_hwnd();
-        self.sync_monitors_from_snapshot(&snapshot.monitors)?;
+        let started_at = Instant::now();
+        let result = (|| {
+            snapshot.sort_for_stability();
+            self.note_observation_reason(observation_reason);
+            let previous_focused_hwnd = self.current_focused_hwnd();
+            self.sync_monitors_from_snapshot(&snapshot.monitors)?;
 
-        let had_previous_snapshot = self.last_snapshot.is_some();
-        let diff = self
-            .last_snapshot
-            .as_ref()
-            .map(|previous| diff_snapshots(previous, &snapshot))
-            .unwrap_or_else(|| SnapshotDiff::initial(&snapshot));
+            let had_previous_snapshot = self.last_snapshot.is_some();
+            let diff = self
+                .last_snapshot
+                .as_ref()
+                .map(|previous| diff_snapshots(previous, &snapshot))
+                .unwrap_or_else(|| SnapshotDiff::initial(&snapshot));
 
-        let discovered_windows = self.ingest_created_windows(
-            &diff.created_windows,
-            snapshot.actual_foreground_hwnd(),
-            had_previous_snapshot,
-        )?;
-        let destroyed_windows = self.ingest_destroyed_windows(&diff.destroyed_hwnds)?
-            + self.prune_state_windows_missing_from_snapshot(&snapshot)?;
+            let discovered_windows = self.ingest_created_windows(
+                &diff.created_windows,
+                snapshot.actual_foreground_hwnd(),
+                had_previous_snapshot,
+            )?;
+            let destroyed_windows = self.ingest_destroyed_windows(&diff.destroyed_hwnds)?
+                + self.prune_state_windows_missing_from_snapshot(&snapshot)?;
 
-        if had_previous_snapshot && diff.monitor_topology_changed {
-            self.push_degraded_reason("monitor-topology-changed".to_string());
-        }
+            if had_previous_snapshot && diff.monitor_topology_changed {
+                self.push_degraded_reason("monitor-topology-changed".to_string());
+            }
 
-        self.refresh_pending_focus_claim(snapshot.actual_foreground_hwnd());
-        if let Some(focused_hwnd) = diff.focused_hwnd
-            && self.current_focused_hwnd() != Some(focused_hwnd)
-            && !self.should_defer_platform_focus_observation(focused_hwnd)
-        {
-            self.observe_focus(focused_hwnd)?;
-        }
+            self.refresh_pending_focus_claim(snapshot.actual_foreground_hwnd());
+            if let Some(focused_hwnd) = diff.focused_hwnd
+                && self.current_focused_hwnd() != Some(focused_hwnd)
+                && !self.should_defer_platform_focus_observation(focused_hwnd)
+            {
+                self.observe_focus(focused_hwnd)?;
+            }
 
-        let apply_plan_context = self.build_apply_plan_context(
-            previous_focused_hwnd,
-            self.current_focused_hwnd(),
-            "",
-            !had_previous_snapshot || discovered_windows > 0,
-        );
-        let planned_operations = if self.management_enabled {
-            self.plan_apply_operations_with_context(&snapshot, apply_plan_context)?
-        } else {
-            Vec::new()
-        };
-        let apply_result = if dry_run || !self.management_enabled {
-            ApplyBatchResult::default()
-        } else {
-            self.adapter.apply_operations(&planned_operations)?
-        };
-        self.arm_pending_geometry_settle(observation_reason, planned_operations.len(), dry_run);
-        let apply_failure_messages = apply_result
-            .failures
-            .iter()
-            .map(|failure| format!("hwnd {}: {}", failure.hwnd, failure.message))
-            .collect::<Vec<_>>();
-        let strip_movement_logs = self.describe_strip_movements(&snapshot, &planned_operations);
-        let window_trace_logs =
-            self.describe_window_trace("plan", &snapshot, &planned_operations, None);
+            let apply_plan_context = self.build_apply_plan_context(
+                previous_focused_hwnd,
+                self.current_focused_hwnd(),
+                "",
+                !had_previous_snapshot || discovered_windows > 0,
+            );
+            let planned_operations = if self.management_enabled {
+                self.plan_apply_operations_with_context(&snapshot, apply_plan_context)?
+            } else {
+                Vec::new()
+            };
+            let apply_result = if dry_run || !self.management_enabled {
+                ApplyBatchResult::default()
+            } else {
+                self.adapter.apply_operations(&planned_operations)?
+            };
+            self.arm_pending_geometry_settle(observation_reason, planned_operations.len(), dry_run);
+            let apply_failure_messages = apply_result
+                .failures
+                .iter()
+                .map(|failure| format!("hwnd {}: {}", failure.hwnd, failure.message))
+                .collect::<Vec<_>>();
+            let strip_movement_logs = self.describe_strip_movements(&snapshot, &planned_operations);
+            let window_trace_logs =
+                self.describe_window_trace("plan", &snapshot, &planned_operations, None);
 
-        let now = unix_timestamp();
-        self.store.state_mut().runtime.last_full_scan_at = Some(now);
-        if !planned_operations.is_empty() {
-            self.store.state_mut().runtime.last_reconcile_at = Some(now);
-        }
-        self.last_snapshot = Some(snapshot.clone());
+            let now = unix_timestamp();
+            self.store.state_mut().runtime.last_full_scan_at = Some(now);
+            if !planned_operations.is_empty() {
+                self.store.state_mut().runtime.last_reconcile_at = Some(now);
+            }
+            self.last_snapshot = Some(snapshot.clone());
 
-        Ok(RuntimeCycleReport {
-            monitor_count: snapshot.monitors.len(),
-            observed_window_count: snapshot.windows.len(),
-            discovered_windows,
-            destroyed_windows,
-            focused_hwnd: snapshot.actual_foreground_hwnd(),
-            observation_reason: Some(observation_reason.to_string()),
-            planned_operations: planned_operations.len(),
-            applied_operations: apply_result.applied,
-            apply_failures: apply_result.failures.len(),
-            apply_failure_messages,
-            recovery_rescans: 0,
-            validation_remaining_operations: 0,
-            recovery_actions: Vec::new(),
-            management_enabled: self.management_enabled,
-            dry_run,
-            degraded_reasons: self.store.state().runtime.degraded_flags.clone(),
-            strip_movement_logs,
-            window_trace_logs,
-            validation_trace_logs: Vec::new(),
-        })
+            Ok(RuntimeCycleReport {
+                monitor_count: snapshot.monitors.len(),
+                observed_window_count: snapshot.windows.len(),
+                discovered_windows,
+                destroyed_windows,
+                focused_hwnd: snapshot.actual_foreground_hwnd(),
+                observation_reason: Some(observation_reason.to_string()),
+                planned_operations: planned_operations.len(),
+                applied_operations: apply_result.applied,
+                apply_failures: apply_result.failures.len(),
+                apply_failure_messages,
+                recovery_rescans: 0,
+                validation_remaining_operations: 0,
+                recovery_actions: Vec::new(),
+                management_enabled: self.management_enabled,
+                dry_run,
+                degraded_reasons: self.store.state().runtime.degraded_flags.clone(),
+                strip_movement_logs,
+                window_trace_logs,
+                validation_trace_logs: Vec::new(),
+            })
+        })();
+        record_perf_metric(&self.perf.observation_sync, started_at, &result);
+        result
     }
 
     fn validate_after_apply(
@@ -517,127 +550,133 @@ impl CoreDaemonRuntime {
         report: &mut RuntimeCycleReport,
         dry_run: bool,
     ) -> Result<(), RuntimeError> {
-        if dry_run || !self.management_enabled || report.planned_operations == 0 {
-            return Ok(());
-        }
+        let started_at = Instant::now();
+        let result = (|| {
+            if dry_run || !self.management_enabled || report.planned_operations == 0 {
+                self.perf.post_apply_validation.record_skip();
+                return Ok(());
+            }
 
-        let validation_snapshot = self.adapter.scan_snapshot()?;
-        report.recovery_rescans += 1;
-        let mut remaining_operations = self.filter_validatable_operations_for_snapshot(
-            &validation_snapshot,
-            self.plan_apply_operations(&validation_snapshot)?,
-        );
-        let adapted_platform_min_width =
-            self.adapt_to_platform_min_widths(&validation_snapshot, &remaining_operations)?;
-        if adapted_platform_min_width {
-            report
-                .recovery_actions
-                .push("platform-min-width-adapted".to_string());
-            remaining_operations = self.filter_validatable_operations_for_snapshot(
+            let validation_snapshot = self.adapter.scan_snapshot()?;
+            report.recovery_rescans += 1;
+            let mut remaining_operations = self.filter_validatable_operations_for_snapshot(
                 &validation_snapshot,
                 self.plan_apply_operations(&validation_snapshot)?,
             );
-        }
-        report.validation_trace_logs = self.describe_window_trace(
-            "validation",
-            &validation_snapshot,
-            &remaining_operations,
-            Some("remaining"),
-        );
-        report.validation_remaining_operations = remaining_operations.len();
-
-        if remaining_operations.is_empty() {
-            self.consecutive_desync_cycles = 0;
-            report
-                .recovery_actions
-                .push("post-apply-validation-clean".to_string());
-            report.degraded_reasons = self.store.state().runtime.degraded_flags.clone();
-            return Ok(());
-        }
-
-        if operations_are_activation_only(&validation_snapshot, &remaining_operations) {
-            self.consecutive_desync_cycles = 0;
-            self.push_degraded_reason("activation:foreground-refused".to_string());
-            report.recovery_actions.push(format!(
-                "activation-only-degraded:{}-ops-remain",
-                remaining_operations.len()
-            ));
-            report.degraded_reasons = self.store.state().runtime.degraded_flags.clone();
-            return Ok(());
-        }
-
-        if !adapted_platform_min_width
-            && report
-                .observation_reason
-                .as_deref()
-                .is_some_and(should_defer_post_apply_retry)
-        {
-            self.consecutive_desync_cycles = 0;
-            report.recovery_actions.push(format!(
-                "post-apply-settling:{}-ops-remain",
-                remaining_operations.len()
-            ));
-            report.degraded_reasons = self.store.state().runtime.degraded_flags.clone();
-            return Ok(());
-        }
-
-        self.push_degraded_reason("desync:post-apply-diverged".to_string());
-        report.recovery_actions.push(format!(
-            "targeted-retry:{}-ops-remain",
-            remaining_operations.len()
-        ));
-
-        let retry_result = self.adapter.apply_operations(&remaining_operations)?;
-        report.applied_operations += retry_result.applied;
-        report.apply_failures += retry_result.failures.len();
-        report.apply_failure_messages.extend(
-            retry_result
-                .failures
-                .iter()
-                .map(|failure| format!("hwnd {}: {}", failure.hwnd, failure.message)),
-        );
-
-        let post_retry_snapshot = self.adapter.scan_snapshot()?;
-        report.recovery_rescans += 1;
-        let post_retry_remaining = self.filter_validatable_operations_for_snapshot(
-            &post_retry_snapshot,
-            self.plan_apply_operations(&post_retry_snapshot)?,
-        );
-        report.validation_remaining_operations = post_retry_remaining.len();
-
-        if post_retry_remaining.is_empty() {
-            self.consecutive_desync_cycles = 0;
-            report.recovery_actions.push("retry-recovered".to_string());
-        } else if operations_are_activation_only(&post_retry_snapshot, &post_retry_remaining) {
-            self.consecutive_desync_cycles = 0;
-            self.push_degraded_reason("activation:foreground-refused".to_string());
-            report.recovery_actions.push(format!(
-                "activation-only-degraded:{}-ops-remain",
-                post_retry_remaining.len()
-            ));
-        } else {
-            self.consecutive_desync_cycles += 1;
-            self.push_degraded_reason(format!(
-                "desync:remaining-operations:{}",
-                post_retry_remaining.len()
-            ));
-            report.recovery_actions.push(format!(
-                "full-scan-escalation:{}-ops-still-diverged",
-                post_retry_remaining.len()
-            ));
-
-            if should_auto_unwind_after_desync(
-                &post_retry_remaining,
-                self.consecutive_desync_cycles,
-            ) {
-                self.request_emergency_unwind("desync-recovery-escalated");
-                report.recovery_actions.push("safe-mode-unwind".to_string());
+            let adapted_platform_min_width =
+                self.adapt_to_platform_min_widths(&validation_snapshot, &remaining_operations)?;
+            if adapted_platform_min_width {
+                report
+                    .recovery_actions
+                    .push("platform-min-width-adapted".to_string());
+                remaining_operations = self.filter_validatable_operations_for_snapshot(
+                    &validation_snapshot,
+                    self.plan_apply_operations(&validation_snapshot)?,
+                );
             }
-        }
+            report.validation_trace_logs = self.describe_window_trace(
+                "validation",
+                &validation_snapshot,
+                &remaining_operations,
+                Some("remaining"),
+            );
+            report.validation_remaining_operations = remaining_operations.len();
 
-        report.management_enabled = self.management_enabled;
-        report.degraded_reasons = self.store.state().runtime.degraded_flags.clone();
-        Ok(())
+            if remaining_operations.is_empty() {
+                self.consecutive_desync_cycles = 0;
+                report
+                    .recovery_actions
+                    .push("post-apply-validation-clean".to_string());
+                report.degraded_reasons = self.store.state().runtime.degraded_flags.clone();
+                return Ok(());
+            }
+
+            if operations_are_activation_only(&validation_snapshot, &remaining_operations) {
+                self.consecutive_desync_cycles = 0;
+                self.push_degraded_reason("activation:foreground-refused".to_string());
+                report.recovery_actions.push(format!(
+                    "activation-only-degraded:{}-ops-remain",
+                    remaining_operations.len()
+                ));
+                report.degraded_reasons = self.store.state().runtime.degraded_flags.clone();
+                return Ok(());
+            }
+
+            if !adapted_platform_min_width
+                && report
+                    .observation_reason
+                    .as_deref()
+                    .is_some_and(should_defer_post_apply_retry)
+            {
+                self.consecutive_desync_cycles = 0;
+                report.recovery_actions.push(format!(
+                    "post-apply-settling:{}-ops-remain",
+                    remaining_operations.len()
+                ));
+                report.degraded_reasons = self.store.state().runtime.degraded_flags.clone();
+                return Ok(());
+            }
+
+            self.push_degraded_reason("desync:post-apply-diverged".to_string());
+            report.recovery_actions.push(format!(
+                "targeted-retry:{}-ops-remain",
+                remaining_operations.len()
+            ));
+
+            let retry_result = self.adapter.apply_operations(&remaining_operations)?;
+            report.applied_operations += retry_result.applied;
+            report.apply_failures += retry_result.failures.len();
+            report.apply_failure_messages.extend(
+                retry_result
+                    .failures
+                    .iter()
+                    .map(|failure| format!("hwnd {}: {}", failure.hwnd, failure.message)),
+            );
+
+            let post_retry_snapshot = self.adapter.scan_snapshot()?;
+            report.recovery_rescans += 1;
+            let post_retry_remaining = self.filter_validatable_operations_for_snapshot(
+                &post_retry_snapshot,
+                self.plan_apply_operations(&post_retry_snapshot)?,
+            );
+            report.validation_remaining_operations = post_retry_remaining.len();
+
+            if post_retry_remaining.is_empty() {
+                self.consecutive_desync_cycles = 0;
+                report.recovery_actions.push("retry-recovered".to_string());
+            } else if operations_are_activation_only(&post_retry_snapshot, &post_retry_remaining) {
+                self.consecutive_desync_cycles = 0;
+                self.push_degraded_reason("activation:foreground-refused".to_string());
+                report.recovery_actions.push(format!(
+                    "activation-only-degraded:{}-ops-remain",
+                    post_retry_remaining.len()
+                ));
+            } else {
+                self.consecutive_desync_cycles += 1;
+                self.push_degraded_reason(format!(
+                    "desync:remaining-operations:{}",
+                    post_retry_remaining.len()
+                ));
+                report.recovery_actions.push(format!(
+                    "full-scan-escalation:{}-ops-still-diverged",
+                    post_retry_remaining.len()
+                ));
+
+                if should_auto_unwind_after_desync(
+                    &post_retry_remaining,
+                    self.consecutive_desync_cycles,
+                ) {
+                    self.request_emergency_unwind("desync-recovery-escalated");
+                    report.recovery_actions.push("safe-mode-unwind".to_string());
+                }
+            }
+
+            report.management_enabled = self.management_enabled;
+            report.degraded_reasons = self.store.state().runtime.degraded_flags.clone();
+            Ok(())
+        })();
+        record_perf_metric(&self.perf.post_apply_validation, started_at, &result);
+        result
     }
 
     fn ingest_created_windows(
@@ -2010,6 +2049,13 @@ fn unix_timestamp() -> u64 {
         .duration_since(UNIX_EPOCH)
         .map(|duration| duration.as_secs())
         .unwrap_or(0)
+}
+
+fn record_perf_metric<T, E>(metric: &AtomicPerfMetric, started_at: Instant, result: &Result<T, E>) {
+    metric.record_duration(started_at.elapsed());
+    if result.is_err() {
+        metric.record_error();
+    }
 }
 
 fn normalize_reason_token(value: &str) -> String {

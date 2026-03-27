@@ -50,6 +50,7 @@ name = "flowtile-diagnostics"
 version = "1.0.0"
 dependencies = [
  "flowtile-domain",
+ "serde",
 ]
 
 [[package]]
@@ -63,6 +64,7 @@ dependencies = [
 name = "flowtile-ipc"
 version = "1.0.0"
 dependencies = [
+ "flowtile-diagnostics",
  "serde",
  "serde_json",
  "windows-sys",
@@ -79,6 +81,7 @@ dependencies = [
 name = "flowtile-windows-adapter"
 version = "1.0.0"
 dependencies = [
+ "flowtile-diagnostics",
  "flowtile-domain",
  "serde",
  "serde_json",

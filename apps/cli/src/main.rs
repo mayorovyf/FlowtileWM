@@ -1,7 +1,10 @@
 use std::{env, process::ExitCode, time::Duration};
 
 use flowtile_domain::RuntimeMode;
-use flowtile_ipc::{CommandClient, IpcRequest, bootstrap as ipc_bootstrap, connect_event_stream};
+use flowtile_ipc::{
+    CommandClient, DiagnosticsProjection, IpcRequest, bootstrap as ipc_bootstrap,
+    connect_event_stream,
+};
 use serde_json::{Map, Value, json};
 
 fn main() -> ExitCode {
@@ -111,6 +114,45 @@ fn run(command: CliCommand) -> ExitCode {
             );
             ExitCode::SUCCESS
         }
+        CliCommand::Perf => {
+            let client = CommandClient::new();
+            match client.transact(&IpcRequest::new("perf-1", "dump_diagnostics", json!({}))) {
+                Ok(response) if response.ok => {
+                    let Some(result) = response.result else {
+                        eprintln!("missing diagnostics payload");
+                        return ExitCode::from(1);
+                    };
+                    let Some(diagnostics_value) = result.get("diagnostics").cloned() else {
+                        eprintln!("missing diagnostics projection");
+                        return ExitCode::from(1);
+                    };
+                    let diagnostics =
+                        match serde_json::from_value::<DiagnosticsProjection>(diagnostics_value) {
+                            Ok(diagnostics) => diagnostics,
+                            Err(error) => {
+                                eprintln!("invalid diagnostics projection: {error}");
+                                return ExitCode::from(1);
+                            }
+                        };
+                    print_perf_summary(&diagnostics);
+                    ExitCode::SUCCESS
+                }
+                Ok(response) => {
+                    if let Some(error) = response.error {
+                        println!(
+                            "{}",
+                            serde_json::to_string_pretty(&error)
+                                .expect("perf error should serialize")
+                        );
+                    }
+                    ExitCode::from(1)
+                }
+                Err(error) => {
+                    eprintln!("{error}");
+                    ExitCode::from(1)
+                }
+            }
+        }
         CliCommand::Events => {
             let connection = match connect_event_stream(Duration::from_secs(3)) {
                 Ok(connection) => connection,
@@ -181,6 +223,7 @@ fn parse_command(arguments: Vec<String>) -> Result<CliCommand, String> {
         "help" | "--help" => Ok(CliCommand::Help),
         "status" => Ok(CliCommand::Status),
         "snapshot" => Ok(CliCommand::Snapshot),
+        "perf" => Ok(CliCommand::Perf),
         "events" => Ok(CliCommand::Events),
         "focus-next" => Ok(CliCommand::simple("focus_next")),
         "focus-prev" => Ok(CliCommand::simple("focus_prev")),
@@ -218,6 +261,7 @@ fn print_help() {
     println!("  flowtile-cli help");
     println!("  flowtile-cli status");
     println!("  flowtile-cli snapshot");
+    println!("  flowtile-cli perf");
     println!("  flowtile-cli events");
     println!("  flowtile-cli focus-next | focus-prev");
     println!("  flowtile-cli focus-workspace-up | focus-workspace-down");
@@ -238,6 +282,7 @@ enum CliCommand {
     Help,
     Status,
     Snapshot,
+    Perf,
     Events,
     Command { command: String, payload: Value },
 }
@@ -248,5 +293,48 @@ impl CliCommand {
             command: command.to_string(),
             payload: json!({}),
         }
+    }
+}
+
+fn print_perf_summary(diagnostics: &DiagnosticsProjection) {
+    println!("flowtile-cli perf");
+    println!("management enabled: {}", diagnostics.management_enabled);
+    println!("degraded flags: {}", diagnostics.degraded_flags.len());
+    if diagnostics.perf.metrics.is_empty() {
+        println!("perf metrics: none");
+        return;
+    }
+
+    println!(
+        "{:<36} {:>8} {:>12} {:>12} {:>12} {:>12} {:>8} {:>8}",
+        "metric", "samples", "total-ms", "avg-us", "max-us", "last-us", "errors", "skips"
+    );
+    for metric in &diagnostics.perf.metrics {
+        println!(
+            "{:<36} {:>8} {:>12} {:>12} {:>12} {:>12} {:>8} {:>8}",
+            metric.metric,
+            metric.samples,
+            format_millis(metric.total_duration_us),
+            metric.average_duration_us,
+            metric.max_duration_us,
+            metric.last_duration_us,
+            metric.error_count,
+            metric.skip_count
+        );
+    }
+}
+
+fn format_millis(duration_us: u64) -> String {
+    format!("{:.3}", duration_us as f64 / 1_000.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{CliCommand, parse_command};
+
+    #[test]
+    fn parses_perf_command() {
+        let command = parse_command(vec!["perf".to_string()]).expect("perf should parse");
+        assert!(matches!(command, CliCommand::Perf));
     }
 }

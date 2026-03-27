@@ -13,6 +13,7 @@ use crate::touchpad::assess_touchpad_override;
 pub fn build_snapshot_projection(runtime: &CoreDaemonRuntime) -> SnapshotProjection {
     let state = runtime.state();
     let touchpad = assess_touchpad_override(runtime.touchpad_config());
+    let perf = runtime.perf_snapshot();
     let metadata_by_hwnd = runtime
         .last_snapshot()
         .map(|snapshot| {
@@ -176,6 +177,7 @@ pub fn build_snapshot_projection(runtime: &CoreDaemonRuntime) -> SnapshotProject
             management_enabled: runtime.management_enabled(),
             touchpad_override_status: touchpad.summary_label().to_string(),
             touchpad_override_detail: touchpad.detail.clone(),
+            perf,
         },
         config: ConfigProjection {
             config_version: state.config_projection.config_version,

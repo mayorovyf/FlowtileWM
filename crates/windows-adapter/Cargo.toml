@@ -7,6 +7,7 @@ publish = false
 description = "Windows platform observation and geometry apply baseline for FlowtileWM."
 
 [dependencies]
+flowtile-diagnostics.workspace = true
 flowtile-domain.workspace = true
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
